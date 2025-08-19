@@ -6,34 +6,55 @@ from PyPDF2 import PdfReader
 import io
 import csv
 import fitz
+from datetime import datetime
 
 # --- Funções de Processamento ---
 
-def process_legislative_pdf(text):
+def process_legislative_pdf(uploaded_file):
     """
     Extrai dados de normas, proposições, requerimentos e pareceres do Diário do Legislativo.
     """
     # ==========================
     # ABA 1: Normas
     # ==========================
-    tipo_map_norma = {
-        "LEI": "LEI", "RESOLUÇÃO": "RAL", "LEI COMPLEMENTAR": "LCP",
-        "EMENDA À CONSTITUIÇÃO": "EMC", "DELIBERAÇÃO DA MESA": "DLB"
+    
+    # Dicionário para mapear mês por extenso para número
+    meses = {
+        'JANEIRO': '01', 'FEVEREIRO': '02', 'MARÇO': '03', 'ABRIL': '04',
+        'MAIO': '05', 'JUNHO': '06', 'JULHO': '07', 'AGOSTO': '08',
+        'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12'
     }
+
+    # Regex para capturar o título da norma, o número e a data completa
     pattern_norma = re.compile(
-        r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA) Nº (\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:, DE .+ DE (\d{4}))?$",
-        re.MULTILINE
+        r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+Nº\s+(\d{1,5}(?:\.\d{0,3})?),\s+DE\s+(\d{1,2})\s+DE\s+(" + "|".join(meses.keys()) + r")\s+DE\s+(\d{4})",
+        re.MULTILINE | re.IGNORECASE
     )
+
     normas = []
-    for match in pattern_norma.finditer(text):
-        tipo_extenso = match.group(1)
-        numero_raw = match.group(2).replace(".", "")
-        ano = match.group(3) if match.group(3) else match.group(4)
-        if not ano:
+    
+    reader = PdfReader(uploaded_file)
+    for page_num, page in enumerate(reader.pages, 1):
+        text = page.extract_text()
+        if not text:
             continue
-        sigla = tipo_map_norma[tipo_extenso]
-        normas.append([sigla, numero_raw, ano])
-    df_normas = pd.DataFrame(normas)
+        
+        # Corrige espaços extras e quebras de linha
+        text = re.sub(r'[ \t]+', ' ', text)
+        text = re.sub(r'\n+', '\n', text)
+        
+        for match in pattern_norma.finditer(text):
+            dia = match.group(3)
+            mes_extenso = match.group(4).upper()
+            ano = match.group(5)
+            
+            mes_numero = meses.get(mes_extenso)
+            if mes_numero:
+                data_san = f"{int(dia):02d}/{mes_numero}/{ano}"
+                # Adiciona à lista de normas as informações solicitadas
+                normas.append([page_num, 1, data_san])
+
+    df_normas = pd.DataFrame(normas, columns=['Página', 'Coluna', 'Data de sanção'])
 
     # ==========================
     # ABA 2: Proposições
@@ -53,10 +74,11 @@ def process_legislative_pdf(text):
     )
 
     proposicoes = []
+    text_full = "".join([p.extract_text() for p in PdfReader(uploaded_file).pages if p.extract_text()])
     
-    for match in pattern_prop.finditer(text):
+    for match in pattern_prop.finditer(text_full):
         start_idx = match.end()
-        subseq_text = text[start_idx:start_idx + 250]
+        subseq_text = text_full[start_idx:start_idx + 250]
         
         if "(Redação do Vencido)" in subseq_text:
             continue
@@ -70,10 +92,8 @@ def process_legislative_pdf(text):
         if pattern_utilidade.search(subseq_text):
             categoria = "Utilidade Pública"
         
-        # Inserindo duas colunas vazias após a coluna 'ano'
         proposicoes.append([sigla, numero, ano, '', '', categoria])
     
-    # Adicionando os nomes das novas colunas ao DataFrame
     df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
     
     # ==========================
@@ -89,39 +109,40 @@ def process_legislative_pdf(text):
         return ""
 
     requerimentos = []
+    text_full = "".join([p.extract_text() for p in PdfReader(uploaded_file).pages if p.extract_text()])
     rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
     rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
     nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
 
-    for match in rqn_pattern.finditer(text):
+    for match in rqn_pattern.finditer(text_full):
         start_idx = match.start()
-        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
-        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
-        block = text[start_idx:end_idx].strip()
+        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text_full[start_idx + 1:], flags=re.MULTILINE)
+        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text_full)
+        block = text_full[start_idx:end_idx].strip()
         nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
         if not nums_in_block: continue
         num_part, ano = nums_in_block[0].replace(".", "").split("/")
         classif = classify_req(block)
         requerimentos.append(["RQN", num_part, ano, "", "", classif])
 
-    for match in rqc_pattern.finditer(text):
+    for match in rqc_pattern.finditer(text_full):
         start_idx = match.start()
-        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
-        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
-        block = text[start_idx:end_idx].strip()
+        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text_full[start_idx + 1:], flags=re.MULTILINE)
+        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text_full)
+        block = text_full[start_idx:end_idx].strip()
         nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
         if not nums_in_block: continue
         num_part, ano = nums_in_block[0].replace(".", "").split("/")
         classif = classify_req(block)
         requerimentos.append(["RQC", num_part, ano, "", "", classif])
     
-    header_match = nao_recebidas_header_pattern.search(text)
+    header_match = nao_recebidas_header_pattern.search(text_full)
     if header_match:
         start_idx = header_match.end()
         next_section_pattern = re.compile(r"^\s*(\*?)\s*.*\s*(\*?)\s*$", re.MULTILINE)
-        next_section_match = next_section_pattern.search(text, start_idx)
-        end_idx = next_section_match.start() if next_section_match else len(text)
-        nao_recebidos_block = text[start_idx:end_idx]
+        next_section_match = next_section_pattern.search(text_full, start_idx)
+        end_idx = next_section_match.start() if next_section_match else len(text_full)
+        nao_recebidos_block = text_full[start_idx:end_idx]
         rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{2}\.?\d{3}/\d{4})", re.IGNORECASE)
         for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
             numero_ano = match.group(1).replace(".", "")
@@ -147,11 +168,11 @@ def process_legislative_pdf(text):
         r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
         re.IGNORECASE | re.DOTALL
     )
-    all_matches = list(emenda_pattern.finditer(text)) + list(substitutivo_pattern.finditer(text))
+    all_matches = list(emenda_pattern.finditer(text_full)) + list(substitutivo_pattern.finditer(text_full))
     all_matches.sort(key=lambda x: x.start())
     
     for title_match in all_matches:
-        text_before_title = text[:title_match.start()]
+        text_before_title = text_full[:title_match.start()]
         last_project_match = None
         for match in project_pattern.finditer(text_before_title):
             last_project_match = match
@@ -279,25 +300,16 @@ def run_app():
     if uploaded_file is not None:
         try:
             if diario_escolhido == 'Legislativo':
-                reader = PdfReader(uploaded_file)
-                text = ""
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-                
-                text = re.sub(r"[ \t]+", " ", text)
-                text = re.sub(r"\n+", "\n", text)
-                
                 with st.spinner('Extraindo dados do Diário do Legislativo...'):
-                    extracted_data = process_legislative_pdf(text)
+                    # Passa o uploaded_file diretamente para a função
+                    extracted_data = process_legislative_pdf(uploaded_file)
 
                 output = io.BytesIO()
                 excel_file_name = "Legislativo_Extraido.xlsx"
                 
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     for sheet_name, df in extracted_data.items():
-                        df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                        df.to_excel(writer, sheet_name=sheet_name, index=False, header=True)
                 
                 output.seek(0)
                 download_data = output
@@ -333,9 +345,8 @@ def run_app():
 
         except Exception as e:
             st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
+            st.error(f"Detalhes do erro: {e}")
 
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
-
-
