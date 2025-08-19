@@ -8,9 +8,10 @@ import fitz  # PyMuPDF
 
 # --- Funções de Processamento ---
 
-def process_legislative_pdf(text):
+def process_legislative_pdf(text, diario_tipo):
     """
-    Extrai dados de normas, proposições, requerimentos e pareceres do Diário do Legislativo.
+    Extrai dados de normas, proposições, requerimentos e pareceres do Diário.
+    O parâmetro `diario_tipo` permite ajustar o processamento conforme o tipo selecionado.
     """
 
     # ==========================
@@ -120,7 +121,11 @@ def process_legislative_pdf(text):
 # --- STREAMLIT APP ---
 def run_app():
     st.title("📑 Extração de Dados Legislativos")
-    st.write("Carregue um arquivo PDF do Diário do Legislativo para extrair Normas, Proposições e Requerimentos.")
+
+    diario_tipo = st.selectbox(
+        "Selecione o tipo de Diário:",
+        ["Legislativo", "Executivo", "Judiciário"]
+    )
 
     uploaded_file = st.file_uploader("Carregar PDF", type=["pdf"])
 
@@ -130,7 +135,7 @@ def run_app():
         for page in pdf_reader.pages:
             text += page.extract_text() + "\n"
 
-        df_normas, df_proposicoes, df_requerimentos = process_legislative_pdf(text)
+        df_normas, df_proposicoes, df_requerimentos = process_legislative_pdf(text, diario_tipo)
 
         tabs = st.tabs(["Normas", "Proposições", "Requerimentos"])
 
@@ -154,6 +159,9 @@ def run_app():
                 st.dataframe(df_requerimentos, use_container_width=True)
             else:
                 st.info("Nenhum requerimento encontrado.")
+
+        # Exibir também qual diário foi processado
+        st.success(f"✅ Diário processado: {diario_tipo}")
 
 
 if __name__ == "__main__":
