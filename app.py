@@ -48,7 +48,6 @@ def process_legislative_pdf(text):
         re.MULTILINE
     )
     
-    # Linha corrigida para evitar o erro de sintaxe
     pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
 
     proposicoes = []
@@ -86,7 +85,7 @@ def process_legislative_pdf(text):
             return ""
         
         # Classifica outros tipos de requerimentos
-        if "voto de congratula" in segment_lower or "formulado voto de congratula" in segment_lower:
+        if "voto de congratula" in segment_lower:
             return "Voto de congratulações"
         if "manifestação de pesar" in segment_lower:
             return "Manifestação de pesar"
@@ -107,4 +106,18 @@ def process_legislative_pdf(text):
         end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
         block = text[start_idx:end_idx].strip()
         
-        nums_in_block = re.findall(r'\d{2}\.?\d{
+        nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+        if not nums_in_block: continue
+        num_part, ano = nums_in_block[0].replace(".", "").split("/")
+        classif = classify_req(block)
+        requerimentos.append(["RQN", num_part, ano, "", "", classif])
+
+    for match in rqc_pattern.finditer(text):
+        start_idx = match.start()
+        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
+        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
+        block = text[start_idx:end_idx].strip()
+        
+        nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+        if not nums_in_block: continue
+        num_part, ano = n
