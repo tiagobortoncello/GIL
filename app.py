@@ -4,8 +4,7 @@ import re
 import pandas as pd
 from PyPDF2 import PdfReader
 import io
-import csv
-import fitz
+import fitz  # PyMuPDF
 
 # --- Funções de Processamento ---
 
@@ -97,8 +96,6 @@ def process_legislative_pdf(text):
 
     requerimentos = []
     rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-    rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-    nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
     
     for match in rqn_pattern.finditer(text):
         start_idx = match.start()
@@ -106,7 +103,6 @@ def process_legislative_pdf(text):
         end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
         block = text[start_idx:end_idx].strip()
         
-        # Aqui estava o erro → regex corrigida
         nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
         
         for num in nums_in_block:
@@ -119,3 +115,46 @@ def process_legislative_pdf(text):
     # Retorno final
     # ==========================
     return df_normas, df_proposicoes, df_requerimentos
+
+
+# --- STREAMLIT APP ---
+def run_app():
+    st.title("📑 Extração de Dados Legislativos")
+    st.write("Carregue um arquivo PDF do Diário do Legislativo para extrair Normas, Proposições e Requerimentos.")
+
+    uploaded_file = st.file_uploader("Carregar PDF", type=["pdf"])
+
+    if uploaded_file is not None:
+        pdf_reader = PdfReader(uploaded_file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+
+        df_normas, df_proposicoes, df_requerimentos = process_legislative_pdf(text)
+
+        tabs = st.tabs(["Normas", "Proposições", "Requerimentos"])
+
+        with tabs[0]:
+            st.subheader("📘 Normas")
+            if not df_normas.empty:
+                st.dataframe(df_normas, use_container_width=True)
+            else:
+                st.info("Nenhuma norma encontrada.")
+
+        with tabs[1]:
+            st.subheader("📗 Proposições")
+            if not df_proposicoes.empty:
+                st.dataframe(df_proposicoes, use_container_width=True)
+            else:
+                st.info("Nenhuma proposição encontrada.")
+
+        with tabs[2]:
+            st.subheader("📙 Requerimentos")
+            if not df_requerimentos.empty:
+                st.dataframe(df_requerimentos, use_container_width=True)
+            else:
+                st.info("Nenhum requerimento encontrado.")
+
+
+if __name__ == "__main__":
+    run_app()
