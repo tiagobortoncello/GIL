@@ -39,10 +39,7 @@ def process_legislative_pdf(uploaded_file):
         if not text:
             continue
         
-        # Corrige espaços extras e quebras de linha
-        text = re.sub(r'[ \t]+', ' ', text)
-        text = re.sub(r'\n+', '\n', text)
-        
+        # O padrão de regex é aplicado ao texto da página atual
         for match in pattern_norma.finditer(text):
             dia = match.group(3)
             mes_extenso = match.group(4).upper()
@@ -54,11 +51,13 @@ def process_legislative_pdf(uploaded_file):
                 # Adiciona à lista de normas as informações solicitadas
                 normas.append([page_num, 1, data_san])
 
+    # Cria o DataFrame com as colunas corretas
     df_normas = pd.DataFrame(normas, columns=['Página', 'Coluna', 'Data de sanção'])
 
     # ==========================
     # ABA 2: Proposições
     # ==========================
+    # Mantém o código original para esta seção, se não houver problemas
     tipo_map_prop = {
         "PROJETO DE LEI": "PL", "PROJETO DE LEI COMPLEMENTAR": "PLC", "INDICAÇÃO": "IND",
         "PROJETO DE RESOLUÇÃO": "PRE", "PROPOSTA DE EMENDA À CONSTITUIÇÃO": "PEC",
@@ -74,6 +73,7 @@ def process_legislative_pdf(uploaded_file):
     )
 
     proposicoes = []
+    uploaded_file.seek(0)
     text_full = "".join([p.extract_text() for p in PdfReader(uploaded_file).pages if p.extract_text()])
     
     for match in pattern_prop.finditer(text_full):
@@ -99,6 +99,7 @@ def process_legislative_pdf(uploaded_file):
     # ==========================
     # ABA 3: Requerimentos
     # ==========================
+    # Mantém o código original para esta seção, se não houver problemas
     def classify_req(segment):
         segment_lower = segment.lower()
         if "requer seja formulado voto de congratulações" in segment_lower: return "Voto de congratulações"
@@ -109,6 +110,7 @@ def process_legislative_pdf(uploaded_file):
         return ""
 
     requerimentos = []
+    uploaded_file.seek(0)
     text_full = "".join([p.extract_text() for p in PdfReader(uploaded_file).pages if p.extract_text()])
     rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
     rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
@@ -154,199 +156,4 @@ def process_legislative_pdf(uploaded_file):
     for r in requerimentos:
         key = (r[0], r[1], r[2])
         if key not in seen:
-            seen.add(key)
-            unique_reqs.append(r)
-    df_requerimentos = pd.DataFrame(unique_reqs)
-
-    # ==========================
-    # ABA 4: Pareceres
-    # ==========================
-    found_projects = {}
-    emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
-    substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-    project_pattern = re.compile(
-        r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
-        re.IGNORECASE | re.DOTALL
-    )
-    all_matches = list(emenda_pattern.finditer(text_full)) + list(substitutivo_pattern.finditer(text_full))
-    all_matches.sort(key=lambda x: x.start())
-    
-    for title_match in all_matches:
-        text_before_title = text_full[:title_match.start()]
-        last_project_match = None
-        for match in project_pattern.finditer(text_before_title):
-            last_project_match = match
-        if last_project_match:
-            sigla_raw = last_project_match.group(2)
-            sigla_map = {
-                "requerimento": "RQN", "projeto de lei": "PL", "pl": "PL", "projeto de resolução": "PRE",
-                "pre": "PRE", "proposta de emenda à constituição": "PEC", "pec": "PEC",
-                "projeto de lei complementar": "PLC", "plc": "PLC"
-            }
-            sigla = sigla_map.get(sigla_raw.lower(), sigla_raw.upper())
-            numero = last_project_match.group(3).replace(".", "")
-            ano = last_project_match.group(4)
-            project_key = (sigla, numero, ano)
-            item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add(item_type)
-    
-    pareceres = []
-    for (sigla, numero, ano), types in found_projects.items():
-        type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
-        pareceres.append([sigla, numero, ano, type_str])
-    df_pareceres = pd.DataFrame(pareceres)
-    
-    return {
-        "Normas": df_normas,
-        "Proposicoes": df_proposicoes,
-        "Requerimentos": df_requerimentos,
-        "Pareceres": df_pareceres
-    }
-
-def process_administrative_pdf(pdf_bytes):
-    """
-    Processa bytes de um arquivo PDF para extrair normas administrativas e retorna dados CSV.
-    """
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        st.error(f"Erro ao abrir o arquivo PDF: {e}")
-        return None
-
-    resultados = []
-    regex = re.compile(
-        r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
-    )
-    regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
-
-    for page in doc:
-        text = page.get_text("text")
-        text = re.sub(r'\s+', ' ', text)
-
-        for match in regex.finditer(text):
-            tipo_texto = match.group(1)
-            numero = match.group(2).replace('.', '')
-            ano = match.group(3)
-
-            if tipo_texto.startswith("DELIBERAÇÃO DA MESA"):
-                sigla = "DLB"
-            elif tipo_texto.startswith("PORTARIA"):
-                sigla = "PRT"
-            elif tipo_texto.startswith("ORDEM DE SERVIÇO"):
-                sigla = "OSV"
-            else:
-                continue
-            resultados.append([sigla, numero, ano])
-
-        if regex_dcs.search(text):
-            resultados.append(["DCS", "", ""])
-    doc.close()
-
-    output_csv = io.StringIO()
-    writer = csv.writer(output_csv, delimiter="\t")
-    writer.writerows(resultados)
-    return output_csv.getvalue().encode('utf-8')
-
-# --- Função Principal da Aplicação ---
-
-def run_app():
-    # --- Custom CSS para estilizar os títulos ---
-    st.markdown("""
-        <style>
-        .title-container {
-            text-align: center;
-            background-color: #f0f0f0;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-        .main-title {
-            color: #d11a2a;
-            font-size: 3em;
-            font-weight: bold;
-            margin-bottom: 0;
-        }
-        .subtitle-gil {
-            color: gray;
-            font-size: 1.5em;
-            margin-top: 5px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # --- Título e informações ---
-    st.markdown("""
-        <div class="title-container">
-            <h1 class="main-title">Extrator de Documentos Oficiais</h1>
-            <h4 class="subtitle-gil">GERÊNCIA DE INFORMAÇÃO LEGISLATIVA - GIL/GDI</h4>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    st.divider()
-
-    # --- Seletor de tipo de Diário ---
-    diario_escolhido = st.radio(
-        "Selecione o tipo de Diário para extração:",
-        ('Legislativo', 'Administrativo', 'Executivo (Em breve)'),
-        horizontal=True
-    )
-    
-    st.divider()
-
-    uploaded_file = st.file_uploader(f"Faça o upload do arquivo PDF do **Diário {diario_escolhido}**.", type="pdf")
-
-    if uploaded_file is not None:
-        try:
-            if diario_escolhido == 'Legislativo':
-                with st.spinner('Extraindo dados do Diário do Legislativo...'):
-                    # Passa o uploaded_file diretamente para a função
-                    extracted_data = process_legislative_pdf(uploaded_file)
-
-                output = io.BytesIO()
-                excel_file_name = "Legislativo_Extraido.xlsx"
-                
-                with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                    for sheet_name, df in extracted_data.items():
-                        df.to_excel(writer, sheet_name=sheet_name, index=False, header=True)
-                
-                output.seek(0)
-                download_data = output
-                file_name = excel_file_name
-                mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-            elif diario_escolhido == 'Administrativo':
-                pdf_bytes = uploaded_file.read()
-                
-                with st.spinner('Extraindo dados do Diário Administrativo...'):
-                    csv_data = process_administrative_pdf(pdf_bytes)
-
-                download_data = csv_data
-                file_name = "Administrativo_Extraido.csv"
-                mime_type = "text/csv"
-
-            else: # Executivo (placeholder)
-                st.info("A funcionalidade para o Diário do Executivo ainda está em desenvolvimento.")
-                download_data = None
-                file_name = None
-                mime_type = None
-
-            if download_data:
-                st.success("Dados extraídos com sucesso! ✅")
-                st.divider()
-                st.download_button(
-                    label="Clique aqui para baixar o arquivo",
-                    data=download_data,
-                    file_name=file_name,
-                    mime=mime_type
-                )
-                st.info(f"O download do arquivo **{file_name}** está pronto.")
-
-        except Exception as e:
-            st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
-            st.error(f"Detalhes do erro: {e}")
-
-# Executa a função principal
-if __name__ == "__main__":
-    run_app()
+            seen.
