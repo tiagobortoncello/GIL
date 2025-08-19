@@ -13,6 +13,7 @@ def process_legislative_pdf(text):
     """
     Extrai dados de normas, proposições, requerimentos e pareceres do Diário do Legislativo.
     """
+
     # ==========================
     # ABA 1: Normas
     # ==========================
@@ -33,7 +34,7 @@ def process_legislative_pdf(text):
             continue
         sigla = tipo_map_norma[tipo_extenso]
         normas.append([sigla, numero_raw, ano])
-    df_normas = pd.DataFrame(normas)
+    df_normas = pd.DataFrame(normas, columns=["Sigla", "Número", "Ano"])
 
     # ==========================
     # ABA 2: Proposições
@@ -48,7 +49,6 @@ def process_legislative_pdf(text):
         re.MULTILINE
     )
     
-    # Linha corrigida para evitar o erro de sintaxe
     pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
 
     proposicoes = []
@@ -69,11 +69,12 @@ def process_legislative_pdf(text):
         if pattern_utilidade.search(subseq_text):
             categoria = "Utilidade Pública"
         
-        # Inserindo duas colunas vazias após a coluna 'ano'
         proposicoes.append([sigla, numero, ano, '', '', categoria])
     
-    # Adicionando os nomes das novas colunas ao DataFrame
-    df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
+    df_proposicoes = pd.DataFrame(
+        proposicoes, 
+        columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria']
+    )
     
     # ==========================
     # ABA 3: Requerimentos
@@ -81,11 +82,9 @@ def process_legislative_pdf(text):
     def classify_req(segment):
         segment_lower = segment.lower()
         
-        # Regras de exclusão para requerimentos de audiência
         if "realizada audiência pública" in segment_lower or "audiência de convidados" in segment_lower:
             return ""
         
-        # Classifica outros tipos de requerimentos
         if "voto de congratula" in segment_lower or "formulado voto de congratula" in segment_lower:
             return "Voto de congratulações"
         if "manifestação de pesar" in segment_lower:
@@ -107,4 +106,16 @@ def process_legislative_pdf(text):
         end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
         block = text[start_idx:end_idx].strip()
         
-        nums_in_block = re.findall(r'\d{2}\.?\d{
+        # Aqui estava o erro → regex corrigida
+        nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+        
+        for num in nums_in_block:
+            categoria = classify_req(block)
+            requerimentos.append([num, categoria])
+    
+    df_requerimentos = pd.DataFrame(requerimentos, columns=["Número/Ano", "Categoria"])
+
+    # ==========================
+    # Retorno final
+    # ==========================
+    return df_normas, df_proposicoes, df_requerimentos
