@@ -48,9 +48,7 @@ def process_legislative_pdf(text):
         re.MULTILINE
     )
     
-    pattern_utilidade = re.compile(
-        r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
-    )
+    pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
 
     proposicoes = []
     
@@ -81,45 +79,58 @@ def process_legislative_pdf(text):
     # ==========================
     def classify_req(segment):
         segment_lower = segment.lower()
-        if "voto de congratula" in segment_lower: return "Voto de congratulações"
-        if "manifestação de pesar" in segment_lower: return "Manifestação de pesar"
-        if "manifestação de repúdio" in segment_lower: return "Manifestação de repúdio"
-        if "moção de aplauso" in segment_lower: return "Moção de aplauso"
+        # Regra de exclusão para requerimentos de audiência
+        if "realizada audiência pública" in segment_lower or "audiência de convidados" in segment_lower:
+            return ""
+        
+        # Classifica outros tipos de requerimentos
+        if "seja formulado voto de congratulações" in segment_lower:
+            return "Voto de congratulações"
+        if "manifestação de pesar" in segment_lower:
+            return "Manifestação de pesar"
+        if "manifestação de repúdio" in segment_lower:
+            return "Manifestação de repúdio"
+        if "moção de aplauso" in segment_lower:
+            return "Moção de aplauso"
         return ""
 
     requerimentos = []
-    rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-    rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-    nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
-
-    for match in rqn_pattern.finditer(text):
-        start_idx = match.start()
-        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
-        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
-        block = text[start_idx:end_idx].strip()
-        nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
-        if not nums_in_block: continue
-        num_part, ano = nums_in_block[0].replace(".", "").split("/")
-        classif = classify_req(block)
-        requerimentos.append(["RQN", num_part, ano, "", "", classif])
-
-    for match in rqc_pattern.finditer(text):
-        start_idx = match.start()
-        next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", text[start_idx + 1:], flags=re.MULTILINE)
-        end_idx = (next_match.start() + start_idx + 1) if next_match else len(text)
-        block = text[start_idx:end_idx].strip()
-        nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
-        if not nums_in_block: continue
-        num_part, ano = nums_in_block[0].replace(".", "").split("/")
-        classif = classify_req(block)
-        requerimentos.append(["RQC", num_part, ano, "", "", classif])
     
+    # Padrão para encontrar todos os requerimentos RQN e RQC
+    req_pattern = re.compile(r"^(?:REQUERIMENTO|REQUER) Nº\s*(\d{2}\.?\d{3})\/(\d{4})", re.MULTILINE | re.IGNORECASE)
+    
+    matches = list(req_pattern.finditer(text))
+    
+    # Processa cada requerimento encontrado
+    for i, match in enumerate(matches):
+        start_idx = match.start()
+        # Encontra o fim do bloco do requerimento (até o próximo requerimento ou o fim do texto)
+        end_idx = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        
+        # Extrai o texto do bloco
+        block = text[start_idx:end_idx].strip()
+        
+        # Extrai os dados do requerimento
+        numero_raw = match.group(1).replace(".", "")
+        ano = match.group(2)
+        
+        # Classifica o tipo de requerimento (RQN ou RQC)
+        req_type = "RQC" if "REQUER" in match.group(0).upper() else "RQN"
+        
+        # Classifica a categoria
+        classif = classify_req(block)
+        
+        requerimentos.append([req_type, numero_raw, ano, "", "", classif])
+    
+    # Processa a seção de proposições "NÃO RECEBIDAS"
+    nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
     header_match = nao_recebidas_header_pattern.search(text)
     if header_match:
         start_idx = header_match.end()
-        next_section_pattern = re.compile(r"^\s*(\*?)\s*.*\s*(\*?)\s*$", re.MULTILINE)
-        next_section_match = next_section_pattern.search(text, start_idx)
-        end_idx = next_section_match.start() if next_section_match else len(text)
+        # Encontra o fim da seção de não recebidos (ou o fim do texto)
+        end_idx = text.find("PARECERES DA MESA", start_idx)
+        if end_idx == -1: end_idx = len(text)
+
         nao_recebidos_block = text[start_idx:end_idx]
         rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{2}\.?\d{3}/\d{4})", re.IGNORECASE)
         for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
