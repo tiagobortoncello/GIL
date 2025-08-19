@@ -121,10 +121,11 @@ def process_legislative_pdf(text, diario_tipo):
 # --- STREAMLIT APP ---
 def run_app():
     st.title("📑 Extração de Dados Legislativos")
+    st.write("Selecione o tipo de Diário que você quer processar:")
 
-    diario_tipo = st.selectbox(
-        "Selecione o tipo de Diário:",
-        ["Legislativo", "Executivo", "Judiciário"]
+    diario_tipo = st.radio(
+        "Tipo de Diário",
+        options=["Legislativo", "Administrativo", "Executivo (em breve)"]
     )
 
     uploaded_file = st.file_uploader("Carregar PDF", type=["pdf"])
@@ -160,7 +161,6 @@ def run_app():
             else:
                 st.info("Nenhum requerimento encontrado.")
 
-        # Exibir também qual diário foi processado
         st.success(f"✅ Diário processado: {diario_tipo}")
 
 
