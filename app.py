@@ -184,6 +184,12 @@ def process_legislative_pdf(text):
     all_matches.sort(key=lambda x: x.start())
 
     for title_match in all_matches:
+        title_text = title_match.group(0).strip()
+        
+        # Ignorar requerimentos que comecem com "Votação do Requerimento"
+        if title_text.upper().startswith("VOTAÇÃO DO REQUERIMENTO"):
+            continue
+
         text_before_title = text[:title_match.start()]
         last_project_match = None
         for match in project_pattern.finditer(text_before_title):
