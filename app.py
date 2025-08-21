@@ -51,12 +51,26 @@ def process_legislative_pdf(text):
     pattern_utilidade = re.compile(
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
+    
+    # Adicionando a nova string de verificação
+    ignore_pattern = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
 
     proposicoes = []
     
     for match in pattern_prop.finditer(text):
-        start_idx = match.end()
-        subseq_text = text[start_idx:start_idx + 250]
+        start_idx = match.start()
+        
+        # Define um 'contexto' para buscar a string de ignorar.
+        # A verificação é feita nos 200 caracteres ANTES da proposição encontrada.
+        contexto_antes = text[max(0, start_idx - 200):start_idx]
+        
+        # Verifica se a string de ignorar está presente no contexto
+        if ignore_pattern.search(contexto_antes):
+            # Se encontrada, ignora esta proposição e continua para a próxima.
+            continue
+
+        # Continua com o código existente para a extração
+        subseq_text = text[match.end():match.end() + 250]
         
         if "(Redação do Vencido)" in subseq_text:
             continue
@@ -337,4 +351,3 @@ def run_app():
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
-
