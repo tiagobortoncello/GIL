@@ -53,13 +53,12 @@ def process_legislative_pdf(text):
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
     
-    # Regex para ignorar proposições já publicadas ou redação final
     ignore_redacao_final = re.compile(
         r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.",
         re.IGNORECASE
     )
     ignore_publicada_antes = re.compile(
-        r"foi publicad[ao] na edição anterior\.",  # cobre "publicada" e "publicado"
+        r"foi publicad[ao] na edição anterior\.",
         re.IGNORECASE
     )
 
@@ -334,19 +333,21 @@ def run_app():
                     for sheet_name, df in extracted_data.items():
                         df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
                         
+                        # Mesclagem da coluna de Classificação na aba Requerimentos
                         if sheet_name == "Requerimentos":
                             ws = writer.sheets[sheet_name]
+                            # Localiza a coluna "Classificação"
+                            class_col_idx = df.columns.get_loc('Classificação') + 1
                             for row_idx, row in enumerate(df.itertuples(index=False), start=1):
-                                classificacao = row[-1]  # última coluna
-                                if classificacao:
-                                    start_col = df.shape[1]
+                                classificacao = getattr(row, 'Classificação')
+                                if classificacao and classificacao.strip():
                                     ws.merge_cells(
                                         start_row=row_idx + 1,
-                                        start_column=start_col + 1,
+                                        start_column=class_col_idx,
                                         end_row=row_idx + 1,
-                                        end_column=start_col + 8
+                                        end_column=class_col_idx + 8
                                     )
-                                    ws.cell(row=row_idx + 1, column=start_col + 1).value = classificacao
+                                    ws.cell(row=row_idx + 1, column=class_col_idx).value = classificacao
                 
                 output.seek(0)
                 download_data = output
