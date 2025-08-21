@@ -6,6 +6,7 @@ from PyPDF2 import PdfReader
 import io
 import csv
 import fitz
+import openpyxl
 
 # --- Funções de Processamento ---
 
@@ -98,10 +99,11 @@ def process_legislative_pdf(text):
     def classify_req(segment):
         segment_lower = segment.lower()
         if "requer seja formulado voto de congratulações" in segment_lower: return "Voto de congratulações"
-        if "em requerem seja formulado voto de congratulações" in segment_lower: return "Voto de congratulações"
+        if "requerem seja formulado voto de congratulações" in segment_lower: return "Voto de congratulações"
         if "manifestação de pesar" in segment_lower: return "Manifestação de pesar"
         if "manifestação de repúdio" in segment_lower: return "Manifestação de repúdio"
         if "moção de aplauso" in segment_lower: return "Moção de aplauso"
+        if "requer seja formulada manifestação de apoio" in segment_lower: return "Manifestação de apoio"
         return ""
 
     requerimentos = []
@@ -151,8 +153,8 @@ def process_legislative_pdf(text):
         if key not in seen:
             seen.add(key)
             unique_reqs.append(r)
-    df_requerimentos = pd.DataFrame(unique_reqs)
-
+    df_requerimentos = pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', '', '', 'Classificação'])
+    
     # ==========================
     # ABA 4: Pareceres
     # ==========================
@@ -185,7 +187,6 @@ def process_legislative_pdf(text):
 
     for title_match in all_matches:
         text_before_title = text[:title_match.start()]
-        # Ignora se houver "Votação do Requerimento" antes
         if re.search(r"Votação do Requerimento", text_before_title, re.IGNORECASE):
             continue
         last_project_match = None
@@ -224,9 +225,6 @@ def process_legislative_pdf(text):
 # Função para PDF Administrativo
 # ==========================
 def process_administrative_pdf(pdf_bytes):
-    """
-    Processa bytes de um arquivo PDF para extrair normas administrativas e retorna dados CSV.
-    """
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
@@ -335,6 +333,20 @@ def run_app():
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     for sheet_name, df in extracted_data.items():
                         df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                        
+                        if sheet_name == "Requerimentos":
+                            ws = writer.sheets[sheet_name]
+                            for row_idx, row in enumerate(df.itertuples(index=False), start=1):
+                                classificacao = row[-1]  # última coluna
+                                if classificacao:
+                                    start_col = df.shape[1]
+                                    ws.merge_cells(
+                                        start_row=row_idx + 1,
+                                        start_column=start_col + 1,
+                                        end_row=row_idx + 1,
+                                        end_column=start_col + 8
+                                    )
+                                    ws.cell(row=row_idx + 1, column=start_col + 1).value = classificacao
                 
                 output.seek(0)
                 download_data = output
@@ -351,7 +363,7 @@ def run_app():
                 file_name = "Administrativo_Extraido.csv"
                 mime_type = "text/csv"
 
-            else: # Executivo (placeholder)
+            else:  # Executivo (placeholder)
                 st.info("A funcionalidade para o Diário do Executivo ainda está em desenvolvimento.")
                 download_data = None
                 file_name = None
