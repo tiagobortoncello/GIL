@@ -52,9 +52,15 @@ def process_legislative_pdf(text):
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
     
-    ignore_redacao_final = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
-    ignore_publicada_antes = re.compile(r"foi publicada na edição anterior.", re.IGNORECASE)
-    ignore_publicada_antes = re.compile(r"foi publicado na edição anterior.", re.IGNORECASE)
+    # Regex para ignorar proposições já publicadas ou redação final
+    ignore_redacao_final = re.compile(
+        r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.",
+        re.IGNORECASE
+    )
+    ignore_publicada_antes = re.compile(
+        r"foi publicad[ao] na edição anterior\.",  # cobre "publicada" e "publicado"
+        re.IGNORECASE
+    )
 
     proposicoes = []
     
@@ -152,7 +158,6 @@ def process_legislative_pdf(text):
     # ==========================
     found_projects = {}
 
-    # Novo padrão para EMENDA vinculada diretamente ao projeto (com ou sem substitutivo)
     emenda_completa_pattern = re.compile(
         r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
         re.IGNORECASE
@@ -166,7 +171,6 @@ def process_legislative_pdf(text):
         re.IGNORECASE | re.DOTALL
     )
 
-    # Captura direta das emendas já ligadas ao projeto
     for match in emenda_completa_pattern.finditer(text):
         numero = match.group(2).replace(".", "")
         ano = match.group(3)
@@ -176,7 +180,6 @@ def process_legislative_pdf(text):
             found_projects[project_key] = set()
         found_projects[project_key].add("EMENDA")
 
-    # Mantém lógica anterior para emenda/substitutivo isolados
     all_matches = list(emenda_pattern.finditer(text)) + list(substitutivo_pattern.finditer(text))
     all_matches.sort(key=lambda x: x.start())
 
@@ -365,4 +368,3 @@ def run_app():
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
-
