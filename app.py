@@ -52,24 +52,29 @@ def process_legislative_pdf(text):
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
     
-    # Adicionando a nova string de verificação
-    ignore_pattern = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
+    # Padrão para ignorar proposições com "redação final"
+    ignore_redacao_final = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
+    # Novo padrão para ignorar proposições que já foram publicadas
+    ignore_publicada_antes = re.compile(r"foi publicada na edição anterior.")
 
     proposicoes = []
     
     for match in pattern_prop.finditer(text):
         start_idx = match.start()
+        end_idx = match.end()
         
-        # Define um 'contexto' para buscar a string de ignorar.
-        # A verificação é feita nos 200 caracteres ANTES da proposição encontrada.
+        # Define um contexto para buscar as strings de ignorar.
+        # Buscamos a string "redação final" no texto antes da proposição (contexto_antes)
         contexto_antes = text[max(0, start_idx - 200):start_idx]
         
-        # Verifica se a string de ignorar está presente no contexto
-        if ignore_pattern.search(contexto_antes):
-            # Se encontrada, ignora esta proposição e continua para a próxima.
+        # Buscamos a string "publicada na edição anterior" no texto que vem logo após a proposição (contexto_depois)
+        contexto_depois = text[end_idx:end_idx + 100]
+        
+        if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
+            # Se a proposição for uma "redação final" ou "publicada na edição anterior", ela é ignorada.
             continue
-
-        # Continua com o código existente para a extração
+            
+        # Continua com o código de extração apenas para as proposições que não foram ignoradas.
         subseq_text = text[match.end():match.end() + 250]
         
         if "(Redação do Vencido)" in subseq_text:
