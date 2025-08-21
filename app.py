@@ -43,8 +43,9 @@ def process_legislative_pdf(text):
         "PROJETO DE RESOLUÇÃO": "PRE", "PROPOSTA DE EMENDA À CONSTITUIÇÃO": "PEC",
         "MENSAGEM": "MSG", "VETO": "VET"
     }
+    # Padrão de proposição corrigido para ignorar caracteres no início da linha
     pattern_prop = re.compile(
-        r"^(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})$",
+        r"^\s*(?:- )?(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})",
         re.MULTILINE
     )
     
@@ -55,7 +56,7 @@ def process_legislative_pdf(text):
     # Padrão para ignorar proposições com "redação final"
     ignore_redacao_final = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
     # Novo padrão para ignorar proposições que já foram publicadas
-    ignore_publicada_antes = re.compile(r"foi publicada na edição anterior.")
+    ignore_publicada_antes = re.compile(r"foi publicada na edição anterior.", re.IGNORECASE)
 
     proposicoes = []
     
@@ -68,7 +69,7 @@ def process_legislative_pdf(text):
         contexto_antes = text[max(0, start_idx - 200):start_idx]
         
         # Buscamos a string "publicada na edição anterior" no texto que vem logo após a proposição (contexto_depois)
-        contexto_depois = text[end_idx:end_idx + 100]
+        contexto_depois = text[end_idx:end_idx + 250]
         
         if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
             # Se a proposição for uma "redação final" ou "publicada na edição anterior", ela é ignorada.
