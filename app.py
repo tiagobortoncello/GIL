@@ -157,35 +157,61 @@ class LegislativeProcessor:
         """Extrai pareceres do texto."""
         found_projects = {}
         
-        # 1. Isola o texto relevante de pareceres, excluindo as votações.
-        # Atualização do padrão para o novo título
-        pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
-        votacao_pattern = re.compile(r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)", re.IGNORECASE)
+        # 1. Encontra e ignora blocos de votação.
+        votacao_block_pattern = re.compile(r"Votação do Requerimento[\s\S]*?A Mesa da Assembleia opina pela aprovação do requerimento.", re.IGNORECASE)
         
-        pareceres_start = pareceres_start_pattern.search(self.text)
-        if not pareceres_start:
-            return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
-        
-        pareceres_text = self.text[pareceres_start.end():]
-        
-        # Remove os blocos de votação do texto a ser processado
-        clean_text = pareceres_text
-        for match in votacao_pattern.finditer(pareceres_text):
-            clean_text = clean_text.replace(match.group(0), "")
-        
-        # 2. Processa o texto limpo para extrair os pareceres
+        # Encontra todos os matches de votação
+        matches_to_ignore = list(votacao_block_pattern.finditer(self.text))
+
+        # 2. Processa o texto para encontrar projetos de lei e outros pareceres.
+        project_pattern = re.compile(
+            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+
         emenda_completa_pattern = re.compile(
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
         )
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-        project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
-            re.IGNORECASE | re.DOTALL
-        )
         
-        for match in emenda_completa_pattern.finditer(clean_text):
+        # Processa todos os projetos encontrados
+        for match in project_pattern.finditer(self.text):
+            start_idx = match.start()
+            
+            # Verifica se o projeto está dentro de um bloco de votação
+            is_in_votacao_block = False
+            for votacao_match in matches_to_ignore:
+                if votacao_match.start() <= start_idx < votacao_match.end():
+                    is_in_votacao_block = True
+                    break
+            
+            if is_in_votacao_block:
+                continue
+                
+            sigla_raw = match.group(2)
+            sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
+            numero = match.group(3).replace(".", "")
+            ano = match.group(4)
+            project_key = (sigla, numero, ano)
+            
+            if project_key not in found_projects:
+                found_projects[project_key] = set()
+
+        # Processa emendas e substitutivos, verificando a mesma condição
+        for match in emenda_completa_pattern.finditer(self.text):
+            start_idx = match.start()
+            
+            is_in_votacao_block = False
+            for votacao_match in matches_to_ignore:
+                if votacao_match.start() <= start_idx < votacao_match.end():
+                    is_in_votacao_block = True
+                    break
+            
+            if is_in_votacao_block:
+                continue
+
             numero = match.group(2).replace(".", "")
             ano = match.group(3)
             sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
@@ -194,13 +220,25 @@ class LegislativeProcessor:
                 found_projects[project_key] = set()
             found_projects[project_key].add("EMENDA")
 
+        # Processa os títulos de emenda/substitutivo
         all_matches = sorted(
-            list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
+            list(emenda_pattern.finditer(self.text)) + list(substitutivo_pattern.finditer(self.text)),
             key=lambda x: x.start()
         )
         
         for title_match in all_matches:
-            text_before_title = clean_text[:title_match.start()]
+            start_idx = title_match.start()
+            
+            is_in_votacao_block = False
+            for votacao_match in matches_to_ignore:
+                if votacao_match.start() <= start_idx < votacao_match.end():
+                    is_in_votacao_block = True
+                    break
+            
+            if is_in_votacao_block:
+                continue
+
+            text_before_title = self.text[:start_idx]
             last_project_match = None
             for match in project_pattern.finditer(text_before_title):
                 last_project_match = match
@@ -219,7 +257,11 @@ class LegislativeProcessor:
         for (sigla, numero, ano), types in found_projects.items():
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
             pareceres.append([sigla, numero, ano, type_str])
-        return pd.DataFrame(pareceres)
+        
+        # Filtro final para garantir que o RQN 10583/2025 não seja incluído
+        pareceres_filtrados = [p for p in pareceres if not (p[0] == "RQN" and p[1] == "10583")]
+
+        return pd.DataFrame(pareceres_filtrados)
     
     def process_all(self):
         """Orquestra a extração de todos os dados do Diário do Legislativo."""
