@@ -52,13 +52,12 @@ def process_legislative_pdf(text):
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
     
-    # Regex para ignorar proposições já publicadas ou redação final
     ignore_redacao_final = re.compile(
         r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.",
         re.IGNORECASE
     )
     ignore_publicada_antes = re.compile(
-        r"foi publicad[ao] na edição anterior\.",  # cobre "publicada" e "publicado"
+        r"foi publicad[ao] na edição anterior\.",  
         re.IGNORECASE
     )
 
@@ -171,6 +170,7 @@ def process_legislative_pdf(text):
         re.IGNORECASE | re.DOTALL
     )
 
+    # Emendas completas
     for match in emenda_completa_pattern.finditer(text):
         numero = match.group(2).replace(".", "")
         ano = match.group(3)
@@ -180,14 +180,14 @@ def process_legislative_pdf(text):
             found_projects[project_key] = set()
         found_projects[project_key].add("EMENDA")
 
+    # Emendas e substitutivos
     all_matches = list(emenda_pattern.finditer(text)) + list(substitutivo_pattern.finditer(text))
     all_matches.sort(key=lambda x: x.start())
 
     for title_match in all_matches:
-        title_text = title_match.group(0).strip()
-        
-        # Ignorar requerimentos que comecem com "Votação do Requerimento"
-        if title_text.upper().startswith("VOTAÇÃO DO REQUERIMENTO"):
+        # Ignorar requerimentos que contenham "Votação do Requerimento"
+        full_text_segment = text[title_match.start():title_match.end() + 200]
+        if "VOTAÇÃO DO REQUERIMENTO" in full_text_segment.upper():
             continue
 
         text_before_title = text[:title_match.start()]
@@ -270,7 +270,6 @@ def process_administrative_pdf(pdf_bytes):
 # --- Função Principal da Aplicação ---
 
 def run_app():
-    # --- Custom CSS para estilizar os títulos ---
     st.markdown("""
         <style>
         .title-container {
