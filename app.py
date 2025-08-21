@@ -43,7 +43,6 @@ def process_legislative_pdf(text):
         "PROJETO DE RESOLUÇÃO": "PRE", "PROPOSTA DE EMENDA À CONSTITUIÇÃO": "PEC",
         "MENSAGEM": "MSG", "VETO": "VET"
     }
-    # Padrão de proposição corrigido para ignorar caracteres no início da linha
     pattern_prop = re.compile(
         r"^\s*(?:- )?\s*(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})",
         re.MULTILINE
@@ -53,9 +52,7 @@ def process_legislative_pdf(text):
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
     
-    # Padrão para ignorar proposições com "redação final"
     ignore_redacao_final = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
-    # Novo padrão para ignorar proposições que já foram publicadas
     ignore_publicada_antes = re.compile(r"foi publicada na edição anterior.", re.IGNORECASE)
 
     proposicoes = []
@@ -64,18 +61,12 @@ def process_legislative_pdf(text):
         start_idx = match.start()
         end_idx = match.end()
         
-        # Define um contexto para buscar as strings de ignorar.
-        # Buscamos a string "redação final" no texto antes da proposição (contexto_antes)
         contexto_antes = text[max(0, start_idx - 200):start_idx]
-        
-        # Buscamos a string "publicada na edição anterior" no texto que vem logo após a proposição (contexto_depois)
         contexto_depois = text[end_idx:end_idx + 250]
         
         if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
-            # Se a proposição for uma "redação final" ou "publicada na edição anterior", ela é ignorada.
             continue
             
-        # Continua com o código de extração apenas para as proposições que não foram ignoradas.
         subseq_text = text[match.end():match.end() + 250]
         
         if "(Redação do Vencido)" in subseq_text:
@@ -90,10 +81,8 @@ def process_legislative_pdf(text):
         if pattern_utilidade.search(subseq_text):
             categoria = "Utilidade Pública"
         
-        # Inserindo duas colunas vazias após a coluna 'ano'
         proposicoes.append([sigla, numero, ano, '', '', categoria])
     
-    # Adicionando os nomes das novas colunas ao DataFrame
     df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
     
     # ==========================
@@ -160,41 +149,59 @@ def process_legislative_pdf(text):
     # ==========================
     # ABA 4: Pareceres
     # ==========================
-    found_projects = {}
-    emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
-    substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-    project_pattern = re.compile(
-        r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
-        re.IGNORECASE | re.DOTALL
+    tipo_map_parecer = {
+        "PROJETO DE LEI": "PL",
+        "PL": "PL",
+        "PROJETO DE LEI COMPLEMENTAR": "PLC",
+        "PLC": "PLC",
+        "PROJETO DE RESOLUÇÃO": "PRE",
+        "PRE": "PRE",
+        "PROPOSTA DE EMENDA À CONSTITUIÇÃO": "PEC",
+        "PEC": "PEC",
+        "REQUERIMENTO": "RQN",   # genérico, pode depois refinar entre RQN/RQC
+    }
+
+    NUM = r'(?P<num>\d{1,5}(?:\.\d{3})*)'
+    ANO = r'(?P<ano>\d{4})'
+    TIPO = (
+        r'(?P<tipo>'
+        r'PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|'
+        r'PLC|PL|PRE|PEC|REQUERIMENTO)'
     )
-    all_matches = list(emenda_pattern.finditer(text)) + list(substitutivo_pattern.finditer(text))
-    all_matches.sort(key=lambda x: x.start())
-    
-    for title_match in all_matches:
-        text_before_title = text[:title_match.start()]
-        last_project_match = None
-        for match in project_pattern.finditer(text_before_title):
-            last_project_match = match
-        if last_project_match:
-            sigla_raw = last_project_match.group(2)
-            sigla_map = {
-                "requerimento": "RQN", "projeto de lei": "PL", "pl": "PL", "projeto de resolução": "PRE",
-                "pre": "PRE", "proposta de emenda à constituição": "PEC", "pec": "PEC",
-                "projeto de lei complementar": "PLC", "plc": "PLC"
-            }
-            sigla = sigla_map.get(sigla_raw.lower(), sigla_raw.upper())
-            numero = last_project_match.group(3).replace(".", "")
-            ano = last_project_match.group(4)
-            project_key = (sigla, numero, ano)
-            item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add(item_type)
-    
+
+    emenda_titulo_re = re.compile(
+        rf'^\s*EMENDA\s*N[ºo]\s*\d+\s+AO\s+(?:SUBSTITUTIVO\s*N[ºo]\s*\d+\s+AO\s+)?{TIPO}\s*N[ºo]?\s*{NUM}\s*/\s*{ANO}\b',
+        re.IGNORECASE | re.MULTILINE
+    )
+
+    substitutivo_titulo_re = re.compile(
+        rf'^\s*SUBSTITUTIVO\s*N[ºo]\s*\d+\s+AO\s+{TIPO}\s*N[ºo]?\s*{NUM}\s*/\s*{ANO}\b',
+        re.IGNORECASE | re.MULTILINE
+    )
+
+    found = {}
+
+    for m in emenda_titulo_re.finditer(text):
+        tipo_ext = m.group('tipo').upper()
+        sigla = tipo_map_parecer.get(tipo_ext, tipo_ext)
+        numero = m.group('num').replace('.', '')
+        ano = m.group('ano')
+        key = (sigla, numero, ano)
+        found.setdefault(key, set()).add('EMENDA')
+
+    for m in substitutivo_titulo_re.finditer(text):
+        tipo_ext = m.group('tipo').upper()
+        sigla = tipo_map_parecer.get(tipo_ext, tipo_ext)
+        numero = m.group('num').replace('.', '')
+        ano = m.group('ano')
+        key = (sigla, numero, ano)
+        found.setdefault(key, set()).add('SUBSTITUTIVO')
+
     pareceres = []
-    for (sigla, numero, ano), types in found_projects.items():
-        type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
-        pareceres.append([sigla, numero, ano, type_str])
+    for (sigla, numero, ano), tipos in found.items():
+        tipo_str = 'SUB/EMENDA' if tipos == {'SUBSTITUTIVO', 'EMENDA'} else next(iter(tipos))
+        pareceres.append([sigla, numero, ano, tipo_str])
+
     df_pareceres = pd.DataFrame(pareceres)
     
     return {
@@ -251,7 +258,6 @@ def process_administrative_pdf(pdf_bytes):
 # --- Função Principal da Aplicação ---
 
 def run_app():
-    # --- Custom CSS para estilizar os títulos ---
     st.markdown("""
         <style>
         .title-container {
@@ -275,7 +281,6 @@ def run_app():
         </style>
     """, unsafe_allow_html=True)
 
-    # --- Título e informações ---
     st.markdown("""
         <div class="title-container">
             <h1 class="main-title">Extrator de Documentos Oficiais</h1>
@@ -285,7 +290,6 @@ def run_app():
     
     st.divider()
 
-    # --- Seletor de tipo de Diário ---
     diario_escolhido = st.radio(
         "Selecione o tipo de Diário para extração:",
         ('Legislativo', 'Administrativo', 'Executivo (Em breve)'),
@@ -334,7 +338,7 @@ def run_app():
                 file_name = "Administrativo_Extraido.csv"
                 mime_type = "text/csv"
 
-            else: # Executivo (placeholder)
+            else: 
                 st.info("A funcionalidade para o Diário do Executivo ainda está em desenvolvimento.")
                 download_data = None
                 file_name = None
