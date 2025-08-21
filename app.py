@@ -43,8 +43,8 @@ def process_legislative_pdf(text):
         "PROJETO DE RESOLUÇÃO": "PRE", "PROPOSTA DE EMENDA À CONSTITUIÇÃO": "PEC",
         "MENSAGEM": "MSG", "VETO": "VET"
     }
-    # Padrão de proposição corrigido para ignorar caracteres no início da linha
-    pattern_prop = re.compile(
+    # Padrão de proposição para encontrar o início do bloco
+    pattern_prop_start = re.compile(
         r"^\s*(?:- )?\s*(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})",
         re.MULTILINE
     )
@@ -60,25 +60,31 @@ def process_legislative_pdf(text):
 
     proposicoes = []
     
-    for match in pattern_prop.finditer(text):
+    # Encontra o próximo cabeçalho para delimitar o bloco de texto
+    next_header_pattern = re.compile(
+        r"^(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO|REQUERIMENTO)",
+        re.MULTILINE
+    )
+    
+    # Encontra todas as ocorrências de proposições no texto
+    matches = list(pattern_prop_start.finditer(text))
+    
+    for i, match in enumerate(matches):
         start_idx = match.start()
-        end_idx = match.end()
         
-        # Define um contexto para buscar as strings de ignorar.
-        # Buscamos a string "redação final" no texto antes da proposição (contexto_antes)
-        contexto_antes = text[max(0, start_idx - 200):start_idx]
+        # Define o final do bloco como o início da próxima proposição ou o final do texto
+        if i + 1 < len(matches):
+            end_idx = matches[i+1].start()
+        else:
+            end_idx = len(text)
+            
+        proposicao_text = text[start_idx:end_idx]
         
-        # Buscamos a string "publicada na edição anterior" no texto que vem logo após a proposição (contexto_depois)
-        contexto_depois = text[end_idx:end_idx + 250]
-        
-        if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
-            # Se a proposição for uma "redação final" ou "publicada na edição anterior", ela é ignorada.
+        # Agora, a verificação é feita em todo o bloco de texto da proposição
+        if ignore_redacao_final.search(proposicao_text) or ignore_publicada_antes.search(proposicao_text):
             continue
             
-        # Continua com o código de extração apenas para as proposições que não foram ignoradas.
-        subseq_text = text[match.end():match.end() + 250]
-        
-        if "(Redação do Vencido)" in subseq_text:
+        if "(Redação do Vencido)" in proposicao_text:
             continue
         
         tipo_extenso = match.group(1)
@@ -87,13 +93,11 @@ def process_legislative_pdf(text):
         sigla = tipo_map_prop[tipo_extenso]
         
         categoria = ""
-        if pattern_utilidade.search(subseq_text):
+        if pattern_utilidade.search(proposicao_text):
             categoria = "Utilidade Pública"
         
-        # Inserindo duas colunas vazias após a coluna 'ano'
         proposicoes.append([sigla, numero, ano, '', '', categoria])
     
-    # Adicionando os nomes das novas colunas ao DataFrame
     df_proposicoes = pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
     
     # ==========================
