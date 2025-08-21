@@ -46,7 +46,7 @@ def classify_req(segment):
     """
     segment_lower = segment.lower()
     if "requer seja formulado voto de congratulações" in segment_lower or \
-       "em requerem seja formulado voto de congratulações" in segment_lower:
+       "requerem seja formulado voto de congratulações" in segment_lower:
         return "Voto de congratulações"
     if "manifestação de pesar" in segment_lower:
         return "Manifestação de pesar"
@@ -54,6 +54,8 @@ def classify_req(segment):
         return "Manifestação de repúdio"
     if "moção de aplauso" in segment_lower:
         return "Moção de aplauso"
+    if "r seja formulada manifestação de apoio" in segment_lower:
+        return "Manifestação de apoio"
     return ""
 
 # --- Classes de Processamento ---
@@ -383,3 +385,4 @@ def run_app():
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
+
