@@ -190,14 +190,16 @@ class LegislativeProcessor:
             if is_in_votacao_block:
                 continue
                 
-            sigla_raw = match.group(2)
-            sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-            numero = match.group(3).replace(".", "")
-            ano = match.group(4)
-            project_key = (sigla, numero, ano)
-            
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
+            # Adição da verificação de grupos de captura
+            if match.group(2) and match.group(3) and match.group(4):
+                sigla_raw = match.group(2)
+                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
+                numero = match.group(3).replace(".", "")
+                ano = match.group(4)
+                project_key = (sigla, numero, ano)
+                
+                if project_key not in found_projects:
+                    found_projects[project_key] = set()
 
         # Processa emendas e substitutivos, verificando a mesma condição
         for match in emenda_completa_pattern.finditer(self.text):
@@ -212,13 +214,15 @@ class LegislativeProcessor:
             if is_in_votacao_block:
                 continue
 
-            numero = match.group(2).replace(".", "")
-            ano = match.group(3)
-            sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
-            project_key = (sigla, numero, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
+            # Adição da verificação de grupos de captura
+            if match.group(2) and match.group(3):
+                numero = match.group(2).replace(".", "")
+                ano = match.group(3)
+                sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
+                project_key = (sigla, numero, ano)
+                if project_key not in found_projects:
+                    found_projects[project_key] = set()
+                found_projects[project_key].add("EMENDA")
 
         # Processa os títulos de emenda/substitutivo
         all_matches = sorted(
@@ -243,15 +247,17 @@ class LegislativeProcessor:
             for match in project_pattern.finditer(text_before_title):
                 last_project_match = match
             if last_project_match:
-                sigla_raw = last_project_match.group(2)
-                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                numero = last_project_match.group(3).replace(".", "")
-                ano = last_project_match.group(4)
-                project_key = (sigla, numero, ano)
-                item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
-                if project_key not in found_projects:
-                    found_projects[project_key] = set()
-                found_projects[project_key].add(item_type)
+                # Adição da verificação de grupos de captura
+                if last_project_match.group(2) and last_project_match.group(3) and last_project_match.group(4):
+                    sigla_raw = last_project_match.group(2)
+                    sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
+                    numero = last_project_match.group(3).replace(".", "")
+                    ano = last_project_match.group(4)
+                    project_key = (sigla, numero, ano)
+                    item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
+                    if project_key not in found_projects:
+                        found_projects[project_key] = set()
+                    found_projects[project_key].add(item_type)
         
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
