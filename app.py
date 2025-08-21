@@ -54,6 +54,7 @@ def process_legislative_pdf(text):
     
     ignore_redacao_final = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
     ignore_publicada_antes = re.compile(r"foi publicada na edição anterior.", re.IGNORECASE)
+    ignore_publicada_antes = re.compile(r"foi publicado na edição anterior.", re.IGNORECASE)
 
     proposicoes = []
     
@@ -364,3 +365,4 @@ def run_app():
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
+
