@@ -55,14 +55,14 @@ def process_legislative_pdf(text):
     
     # Padrão para ignorar proposições com "redação final"
     ignore_redacao_final = re.compile(r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.")
-    # Novo padrão para ignorar proposições que já foram publicadas
-    ignore_publicada_antes = re.compile(r"foi publicada na edição anterior.", re.IGNORECASE)
+    # Novo padrão para ignorar proposições que já foram publicadas, com flexibilidade na palavra "publicado/a"
+    ignore_publicada_antes = re.compile(r"foi publicad[oa] na edição anterior.", re.IGNORECASE)
 
     proposicoes = []
     
     # Encontra o próximo cabeçalho para delimitar o bloco de texto
     next_header_pattern = re.compile(
-        r"^(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO|REQUERIMENTO)",
+        r"^(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO|REQUERIMENTO|PARECER)",
         re.MULTILINE
     )
     
