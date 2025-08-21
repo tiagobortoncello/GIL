@@ -8,7 +8,6 @@ import csv
 import fitz
 
 # --- Constantes e Mapeamentos ---
-# Evita a repetição de strings e facilita a manutenção
 TIPO_MAP_NORMA = {
     "LEI": "LEI",
     "RESOLUÇÃO": "RAL",
@@ -157,6 +156,24 @@ class LegislativeProcessor:
     def process_pareceres(self):
         """Extrai pareceres do texto."""
         found_projects = {}
+        
+        # 1. Isola o texto relevante de pareceres, excluindo as votações.
+        # Atualização do padrão para o novo título
+        pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
+        votacao_pattern = re.compile(r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)", re.IGNORECASE)
+        
+        pareceres_start = pareceres_start_pattern.search(self.text)
+        if not pareceres_start:
+            return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
+        
+        pareceres_text = self.text[pareceres_start.end():]
+        
+        # Remove os blocos de votação do texto a ser processado
+        clean_text = pareceres_text
+        for match in votacao_pattern.finditer(pareceres_text):
+            clean_text = clean_text.replace(match.group(0), "")
+        
+        # 2. Processa o texto limpo para extrair os pareceres
         emenda_completa_pattern = re.compile(
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
@@ -168,7 +185,7 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
         
-        for match in emenda_completa_pattern.finditer(self.text):
+        for match in emenda_completa_pattern.finditer(clean_text):
             numero = match.group(2).replace(".", "")
             ano = match.group(3)
             sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
@@ -178,14 +195,12 @@ class LegislativeProcessor:
             found_projects[project_key].add("EMENDA")
 
         all_matches = sorted(
-            list(emenda_pattern.finditer(self.text)) + list(substitutivo_pattern.finditer(self.text)),
+            list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
             key=lambda x: x.start()
         )
         
         for title_match in all_matches:
-            text_before_title = self.text[:title_match.start()]
-            if re.search(r"Votação do Requerimento", text_before_title, re.IGNORECASE):
-                continue
+            text_before_title = clean_text[:title_match.start()]
             last_project_match = None
             for match in project_pattern.finditer(text_before_title):
                 last_project_match = match
@@ -385,4 +400,3 @@ def run_app():
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
-
