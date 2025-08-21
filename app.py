@@ -165,40 +165,41 @@ def process_legislative_pdf(text):
     # ABA 4: Pareceres
     # ==========================
     found_projects = {}
-    emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
-    substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-    project_pattern = re.compile(
-        r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
-        re.IGNORECASE | re.DOTALL
+    
+    # Novo padrão para capturar emendas e substitutivos com a proposição a que se referem
+    emenda_complex_pattern = re.compile(
+        r"EMENDA Nº (\d+)\s*(?:AO SUBSTITUTIVO Nº (\d+))?\s*AO\s*(PROJETO DE LEI|PL|PROJETO DE LEI COMPLEMENTAR|PLC|PROJETO DE RESOLUÇÃO|PRE|PROPOSTA DE EMENDA À CONSTITUIÇÃO|PEC|REQUERIMENTO)\s+Nº\s*(\d{1,}\.?\d{3})\s*/\s*(\d{4})",
+        re.IGNORECASE
     )
-    all_matches = list(emenda_pattern.finditer(text)) + list(substitutivo_pattern.finditer(text))
-    all_matches.sort(key=lambda x: x.start())
-    
-    for title_match in all_matches:
-        text_before_title = text[:title_match.start()]
-        last_project_match = None
-        for match in project_pattern.finditer(text_before_title):
-            last_project_match = match
-        if last_project_match:
-            sigla_raw = last_project_match.group(2)
-            sigla_map = {
-                "requerimento": "RQN", "projeto de lei": "PL", "pl": "PL", "projeto de resolução": "PRE",
-                "pre": "PRE", "proposta de emenda à constituição": "PEC", "pec": "PEC",
-                "projeto de lei complementar": "PLC", "plc": "PLC"
-            }
-            sigla = sigla_map.get(sigla_raw.lower(), sigla_raw.upper())
-            numero = last_project_match.group(3).replace(".", "")
-            ano = last_project_match.group(4)
-            project_key = (sigla, numero, ano)
-            item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add(item_type)
-    
+
+    sigla_map = {
+        "requerimento": "RQN", "projeto de lei": "PL", "pl": "PL", "projeto de resolução": "PRE",
+        "pre": "PRE", "proposta de emenda à constituição": "PEC", "pec": "PEC",
+        "projeto de lei complementar": "PLC", "plc": "PLC"
+    }
+
+    for match in emenda_complex_pattern.finditer(text):
+        emenda_num = match.group(1)
+        substitutivo_num = match.group(2)
+        tipo_extenso = match.group(3)
+        numero_raw = match.group(4).replace(".", "")
+        ano = match.group(5)
+
+        sigla = sigla_map.get(tipo_extenso.lower(), tipo_extenso.upper())
+        project_key = (sigla, numero_raw, ano)
+        
+        if project_key not in found_projects:
+            found_projects[project_key] = set()
+
+        found_projects[project_key].add("EMENDA")
+        if substitutivo_num:
+            found_projects[project_key].add("SUBSTITUTIVO")
+
     pareceres = []
     for (sigla, numero, ano), types in found_projects.items():
         type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
         pareceres.append([sigla, numero, ano, type_str])
+    
     df_pareceres = pd.DataFrame(pareceres)
     
     return {
