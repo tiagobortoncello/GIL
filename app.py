@@ -52,12 +52,13 @@ def process_legislative_pdf(text):
         r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL
     )
     
+    # Regex para ignorar proposições já publicadas ou redação final
     ignore_redacao_final = re.compile(
         r"Assim sendo, opinamos por se dar à proposição a seguinte redação final, que está de acordo com o aprovado.",
         re.IGNORECASE
     )
     ignore_publicada_antes = re.compile(
-        r"foi publicad[ao] na edição anterior\.",  
+        r"foi publicad[ao] na edição anterior\.",  # cobre "publicada" e "publicado"
         re.IGNORECASE
     )
 
@@ -170,7 +171,6 @@ def process_legislative_pdf(text):
         re.IGNORECASE | re.DOTALL
     )
 
-    # Emendas completas
     for match in emenda_completa_pattern.finditer(text):
         numero = match.group(2).replace(".", "")
         ano = match.group(3)
@@ -180,17 +180,14 @@ def process_legislative_pdf(text):
             found_projects[project_key] = set()
         found_projects[project_key].add("EMENDA")
 
-    # Emendas e substitutivos
     all_matches = list(emenda_pattern.finditer(text)) + list(substitutivo_pattern.finditer(text))
     all_matches.sort(key=lambda x: x.start())
 
     for title_match in all_matches:
-        # Ignorar requerimentos que contenham "Votação do Requerimento"
-        full_text_segment = text[title_match.start():title_match.end() + 200]
-        if "VOTAÇÃO DO REQUERIMENTO" in full_text_segment.upper():
-            continue
-
         text_before_title = text[:title_match.start()]
+        # Ignora se houver "Votação do Requerimento" antes
+        if re.search(r"Votação do Requerimento", text_before_title, re.IGNORECASE):
+            continue
         last_project_match = None
         for match in project_pattern.finditer(text_before_title):
             last_project_match = match
@@ -223,6 +220,9 @@ def process_legislative_pdf(text):
         "Pareceres": df_pareceres
     }
 
+# ==========================
+# Função para PDF Administrativo
+# ==========================
 def process_administrative_pdf(pdf_bytes):
     """
     Processa bytes de um arquivo PDF para extrair normas administrativas e retorna dados CSV.
@@ -267,8 +267,9 @@ def process_administrative_pdf(pdf_bytes):
     writer.writerows(resultados)
     return output_csv.getvalue().encode('utf-8')
 
-# --- Função Principal da Aplicação ---
-
+# ==========================
+# Função Principal da Aplicação
+# ==========================
 def run_app():
     st.markdown("""
         <style>
