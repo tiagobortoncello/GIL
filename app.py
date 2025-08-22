@@ -44,7 +44,7 @@ def classify_req(segment):
     Classifica um requerimento com base no texto do segmento.
     """
     segment_lower = segment.lower()
-    if "seja formulado voto de congratulações" in segment_lower:
+    if "seja formulado voto de congratulações" in segment_lower
         return "Voto de congratulações"
     if "manifestação de pesar" in segment_lower:
         return "Manifestação de pesar"
@@ -113,56 +113,36 @@ class LegislativeProcessor:
     def process_requerimentos(self):
         """Extrai requerimentos do texto."""
         requerimentos = []
-
-        # Padrão mais robusto para capturar qualquer requerimento
-        # Captura o texto que o antecede para determinar o tipo (RQN/RQC)
-        # e o texto subsequente para a classificação
-        rq_pattern = re.compile(
-            r"^(.*?)REQUERIMENTO (?:Nº|nº)?\s*(\d{1,5}\.?\d{0,3})\s*[/](\d{4})(.*?)",
-            re.IGNORECASE | re.DOTALL | re.MULTILINE
-        )
-
-        # Padrão para o cabeçalho de 'Proposições Não Recebidas'
-        nao_recebidas_header_pattern = re.compile(
-            r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE
-        )
-
-        # Encontra a posição do cabeçalho
-        header_match = nao_recebidas_header_pattern.search(self.text)
-        header_start_idx = header_match.start() if header_match else -1
-
-        for match in rq_pattern.finditer(self.text):
-            numero_ano = match.group(2).replace(".", "")
-            ano = match.group(3)
-            segment_before = match.group(1)
-            segment_after = match.group(4)
-            
-            # Determina a sigla com base no texto antes do número
-            if "REQUERIMENTO Nº" in segment_before.upper():
-                sigla = "RQN"
-            elif "REQUERIMENTO nº" in segment_before.lower():
-                sigla = "RQC"
-            else:
-                # Se não encontrar o padrão específico,
-                # presume que é RQN ou usa o do contexto
-                sigla = "RQN"
-            
-            # Determina a classificação
-            classif = ""
-            
-            # Verifica se o requerimento está no bloco de não recebidos
-            is_nao_recebido = False
-            if header_start_idx != -1 and match.start() > header_start_idx:
-                classif = "NÃO RECEBIDO"
-                is_nao_recebido = True
-            
-            # Se não for "NÃO RECEBIDO", usa a classificação normal
-            if not is_nao_recebido:
-                classif = classify_req(segment_after)
-            
-            requerimentos.append([sigla, numero_ano, ano, "", "", classif])
+        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+        rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+        nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         
-        # Remove duplicatas
+        for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_pattern, "RQC")]:
+            for match in pattern.finditer(self.text):
+                start_idx = match.start()
+                next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
+                end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
+                block = self.text[start_idx:end_idx].strip()
+                nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+                if not nums_in_block:
+                    continue
+                num_part, ano = nums_in_block[0].replace(".", "").split("/")
+                classif = classify_req(block)
+                requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+        
+        header_match = nao_recebidas_header_pattern.search(self.text)
+        if header_match:
+            start_idx = header_match.end()
+            next_section_pattern = re.compile(r"^\s*(\*?)\s*.*\s*(\*?)\s*$", re.MULTILINE)
+            next_section_match = next_section_pattern.search(self.text, start_idx)
+            end_idx = next_section_match.start() if next_section_match else len(self.text)
+            nao_recebidos_block = self.text[start_idx:end_idx]
+            rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{2}\.?\d{3}/\d{4})", re.IGNORECASE)
+            for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
+                numero_ano = match.group(1).replace(".", "")
+                num_part, ano = numero_ano.split("/")
+                requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
+        
         unique_reqs = []
         seen = set()
         for r in requerimentos:
@@ -170,8 +150,7 @@ class LegislativeProcessor:
             if key not in seen:
                 seen.add(key)
                 unique_reqs.append(r)
-        
-        return pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
+        return pd.DataFrame(unique_reqs)
 
     def process_pareceres(self):
         """Extrai pareceres do texto."""
