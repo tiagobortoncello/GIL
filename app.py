@@ -113,55 +113,56 @@ class LegislativeProcessor:
     def process_requerimentos(self):
         """Extrai requerimentos do texto."""
         requerimentos = []
-        
-        # Padrões para extração de requerimentos
-        # Padrão para requerimentos em geral
+
+        # Padrão mais robusto para capturar qualquer requerimento
+        # Captura o texto que o antecede para determinar o tipo (RQN/RQC)
+        # e o texto subsequente para a classificação
         rq_pattern = re.compile(
-            r"REQUERIMENTO (?:Nº|nº)?\s*(\d{1,5}\.?\d{0,3})\s*[/](\d{4})", re.IGNORECASE
+            r"^(.*?)REQUERIMENTO (?:Nº|nº)?\s*(\d{1,5}\.?\d{0,3})\s*[/](\d{4})(.*?)",
+            re.IGNORECASE | re.DOTALL | re.MULTILINE
         )
+
         # Padrão para o cabeçalho de 'Proposições Não Recebidas'
-        nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
-        
-        # Encontra o bloco de 'Proposições Não Recebidas'
+        nao_recebidas_header_pattern = re.compile(
+            r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE
+        )
+
+        # Encontra a posição do cabeçalho
         header_match = nao_recebidas_header_pattern.search(self.text)
-        nao_recebidos_block = ""
-        if header_match:
-            start_idx = header_match.end()
-            next_section_pattern = re.compile(r"^\s*(\*+|-+\s*\S+.*?\s*|Diário do Legislativo)", re.MULTILINE | re.IGNORECASE)
-            next_section_match = next_section_pattern.search(self.text, start_idx)
-            end_idx = next_section_match.start() if next_section_match else len(self.text)
-            nao_recebidos_block = self.text[start_idx:end_idx]
-        
-        # Processa todos os requerimentos no texto
+        header_start_idx = header_match.start() if header_match else -1
+
         for match in rq_pattern.finditer(self.text):
-            numero_ano = match.group(1).replace(".", "")
-            ano = match.group(2)
+            numero_ano = match.group(2).replace(".", "")
+            ano = match.group(3)
+            segment_before = match.group(1)
+            segment_after = match.group(4)
             
-            # Obtém o contexto para classificação
-            start_idx = match.start()
-            end_idx = match.end()
-            context_end = self.text.find('REQUERIMENTO Nº', end_idx)
-            if context_end == -1:
-                context_end = len(self.text)
-            segment = self.text[end_idx:context_end]
-            classif = classify_req(segment)
-            
-            # Verifica se o requerimento está no bloco de não recebidos
-            is_nao_recebido = header_match and (match.start() >= header_match.start() and match.end() <= header_match.end())
-            
-            # Decide a sigla e categoria
-            if 'REQUERIMENTO Nº' in self.text[start_idx-20:end_idx].upper():
+            # Determina a sigla com base no texto antes do número
+            if "REQUERIMENTO Nº" in segment_before.upper():
                 sigla = "RQN"
-            elif 'REQUERIMENTO nº' in self.text[start_idx-20:end_idx].lower():
+            elif "REQUERIMENTO nº" in segment_before.lower():
                 sigla = "RQC"
             else:
+                # Se não encontrar o padrão específico,
+                # presume que é RQN ou usa o do contexto
                 sigla = "RQN"
             
-            if is_nao_recebido:
+            # Determina a classificação
+            classif = ""
+            
+            # Verifica se o requerimento está no bloco de não recebidos
+            is_nao_recebido = False
+            if header_start_idx != -1 and match.start() > header_start_idx:
                 classif = "NÃO RECEBIDO"
+                is_nao_recebido = True
+            
+            # Se não for "NÃO RECEBIDO", usa a classificação normal
+            if not is_nao_recebido:
+                classif = classify_req(segment_after)
             
             requerimentos.append([sigla, numero_ano, ano, "", "", classif])
         
+        # Remove duplicatas
         unique_reqs = []
         seen = set()
         for r in requerimentos:
@@ -170,7 +171,7 @@ class LegislativeProcessor:
                 seen.add(key)
                 unique_reqs.append(r)
         
-        return pd.DataFrame(unique_reqs)
+        return pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
 
     def process_pareceres(self):
         """Extrai pareceres do texto."""
