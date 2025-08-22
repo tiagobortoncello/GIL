@@ -44,8 +44,7 @@ def classify_req(segment):
     Classifica um requerimento com base no texto do segmento.
     """
     segment_lower = segment.lower()
-    if "requer seja formulado voto de congratulações" in segment_lower or \
-       "requerem seja formulado voto de congratulações" in segment_lower:
+    if "seja formulado voto de congratulações" in segment_lower
         return "Voto de congratulações"
     if "manifestação de pesar" in segment_lower:
         return "Manifestação de pesar"
@@ -400,3 +399,4 @@ def run_app():
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
+
