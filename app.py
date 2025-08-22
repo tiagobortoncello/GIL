@@ -111,38 +111,73 @@ class LegislativeProcessor:
         return pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
 
     def process_requerimentos(self):
-        """Extrai requerimentos do texto."""
+        """Extrai requerimentos do texto (RQN/RQC), evitando falsos positivos e capturando os 'NÃO RECEBIDOS'."""
         requerimentos = []
-        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-        rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+
+        # Cabeçalho obrigatório: "REQUERIMENTO Nº 12.345/2025" no início da linha
+        req_head_pattern = re.compile(
+            r"^\s*REQUERIMENTO\s+N[ºo]\s+(\d{1,5}\.?\d{0,3}/\d{4})",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        # Para identificar área de "Proposições Não Recebidas"
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
-        
-        for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_pattern, "RQC")]:
-            for match in pattern.finditer(self.text):
-                start_idx = match.start()
-                next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
-                end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
-                block = self.text[start_idx:end_idx].strip()
-                nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
-                if not nums_in_block:
-                    continue
-                num_part, ano = nums_in_block[0].replace(".", "").split("/")
-                classif = classify_req(block)
-                requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
-        
+
+        # --- Captura requerimentos "normais" a partir dos cabeçalhos ---
+        matches = list(req_head_pattern.finditer(self.text))
+
+        for i, m in enumerate(matches):
+            numero_ano = m.group(1).replace(".", "")
+            if "/" not in numero_ano:
+                continue
+            num_part, ano = numero_ano.split("/")
+
+            start_idx = m.start()
+            # bloco vai até o próximo "REQUERIMENTO Nº ..." ou fim
+            end_idx = matches[i + 1].start() if i + 1 < len(matches) else len(self.text)
+            block = self.text[start_idx:end_idx]
+
+            # Heurística de tipo: RQC se mencionar "da Comissão" próximo ao cabeçalho
+            lookahead = block[:300]
+            if re.search(r"\bda\s+Comissão\b", lookahead, re.IGNORECASE):
+                sigla = "RQC"
+            else:
+                sigla = "RQN"
+
+            # Classificação (votos, moções etc.)
+            classif = classify_req(block)
+
+            requerimentos.append([sigla, num_part, ano, "", "", classif])
+
+        # --- Captura requerimentos NÃO RECEBIDOS ---
         header_match = nao_recebidas_header_pattern.search(self.text)
         if header_match:
             start_idx = header_match.end()
-            next_section_pattern = re.compile(r"^\s*(\*?)\s*.*\s*(\*?)\s*$", re.MULTILINE)
-            next_section_match = next_section_pattern.search(self.text, start_idx)
-            end_idx = next_section_match.start() if next_section_match else len(self.text)
+
+            # tenta achar próximo "grande cabeçalho" em CAIXA ALTA; se não achar, procura "TRAMITAÇÃO DE PROPOSIÇÕES"
+            uppercase_header = re.compile(r"^[A-ZÁÂÃÉÊÍÓÔÕÚÇ0-9][A-ZÁÂÃÉÊÍÓÔÕÚÇ0-9 \-–/()]{6,}$", re.MULTILINE)
+            next_upper = uppercase_header.search(self.text, start_idx)
+            if not next_upper:
+                next_tram = re.search(r"^\s*TRAMITAÇÃO DE PROPOSIÇÕES", self.text, re.IGNORECASE | re.MULTILINE)
+                end_idx = next_tram.start() if next_tram else len(self.text)
+            else:
+                end_idx = next_upper.start()
+
             nao_recebidos_block = self.text[start_idx:end_idx]
-            rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{2}\.?\d{3}/\d{4})", re.IGNORECASE)
+
+            rqn_nao_recebido_pattern = re.compile(
+                r"REQUERIMENTO\s+N[ºo]\s+(\d{1,5}\.?\d{0,3}/\d{4})",
+                re.IGNORECASE
+            )
+
             for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
                 numero_ano = match.group(1).replace(".", "")
+                if "/" not in numero_ano:
+                    continue
                 num_part, ano = numero_ano.split("/")
                 requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
-        
+
+        # --- Remove duplicados (por Sigla, Número, Ano) ---
         unique_reqs = []
         seen = set()
         for r in requerimentos:
@@ -150,28 +185,32 @@ class LegislativeProcessor:
             if key not in seen:
                 seen.add(key)
                 unique_reqs.append(r)
-        return pd.DataFrame(unique_reqs)
+
+        return pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Classificação'])
 
     def process_pareceres(self):
         """Extrai pareceres do texto."""
         found_projects = {}
-        
+
         # 1. Isola o texto relevante de pareceres, excluindo as votações.
         # Atualização do padrão para o novo título
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
-        votacao_pattern = re.compile(r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)", re.IGNORECASE)
-        
+        votacao_pattern = re.compile(
+            r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
+            re.IGNORECASE
+        )
+
         pareceres_start = pareceres_start_pattern.search(self.text)
         if not pareceres_start:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
-        
+
         pareceres_text = self.text[pareceres_start.end():]
-        
+
         # Remove os blocos de votação do texto a ser processado
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
-        
+
         # 2. Processa o texto limpo para extrair os pareceres
         emenda_completa_pattern = re.compile(
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
@@ -183,7 +222,7 @@ class LegislativeProcessor:
             r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
-        
+
         for match in emenda_completa_pattern.finditer(clean_text):
             numero = match.group(2).replace(".", "")
             ano = match.group(3)
@@ -197,7 +236,7 @@ class LegislativeProcessor:
             list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
             key=lambda x: x.start()
         )
-        
+
         for title_match in all_matches:
             text_before_title = clean_text[:title_match.start()]
             last_project_match = None
@@ -213,20 +252,20 @@ class LegislativeProcessor:
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
-        
+
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
             pareceres.append([sigla, numero, ano, type_str])
         return pd.DataFrame(pareceres)
-    
+
     def process_all(self):
         """Orquestra a extração de todos os dados do Diário do Legislativo."""
         df_normas = self.process_normas()
         df_proposicoes = self.process_proposicoes()
         df_requerimentos = self.process_requerimentos()
         df_pareceres = self.process_pareceres()
-        
+
         return {
             "Normas": df_normas,
             "Proposicoes": df_proposicoes,
@@ -249,13 +288,13 @@ class AdministrativeProcessor:
         except Exception as e:
             st.error(f"Erro ao abrir o arquivo PDF: {e}")
             return None
-        
+
         resultados = []
         regex = re.compile(
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
-        
+
         for page in doc:
             text = page.get_text("text")
             text = re.sub(r'\s+', ' ', text)
@@ -268,13 +307,13 @@ class AdministrativeProcessor:
                     "PORTARIA DGE": "PRT",
                     "ORDEM DE SERVIÇO PRES/PSEC": "OSV"
                 }.get(tipo_texto, None)
-                
+
                 if sigla:
                     resultados.append([sigla, numero, ano])
-            
+
             if regex_dcs.search(text):
                 resultados.append(["DCS", "", ""])
-        
+
         doc.close()
         return resultados
 
@@ -283,7 +322,7 @@ class AdministrativeProcessor:
         resultados = self.process_pdf()
         if resultados is None:
             return None
-        
+
         output_csv = io.StringIO()
         writer = csv.writer(output_csv, delimiter="\t")
         writer.writerows(resultados)
@@ -314,26 +353,26 @@ def run_app():
     }
     </style>
     """, unsafe_allow_html=True)
-    
+
     st.markdown("""
     <div class="title-container">
     <h1 class="main-title">Extrator de Documentos Oficiais</h1>
     <h4 class="subtitle-gil">GERÊNCIA DE INFORMAÇÃO LEGISLATIVA - GIL/GDI</h4>
     </div>
     """, unsafe_allow_html=True)
-    
+
     st.divider()
-    
+
     diario_escolhido = st.radio(
         "Selecione o tipo de Diário para extração:",
         ('Legislativo', 'Administrativo', 'Executivo (Em breve)'),
         horizontal=True
     )
-    
+
     st.divider()
-    
+
     uploaded_file = st.file_uploader(f"Faça o upload do arquivo PDF do **Diário {diario_escolhido}**.", type="pdf")
-    
+
     if uploaded_file is not None:
         try:
             if diario_escolhido == 'Legislativo':
@@ -343,14 +382,14 @@ def run_app():
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
-                
+
                 text = re.sub(r"[ \t]+", " ", text)
                 text = re.sub(r"\n+", "\n", text)
-                
+
                 with st.spinner('Extraindo dados do Diário do Legislativo...'):
                     processor = LegislativeProcessor(text)
                     extracted_data = processor.process_all()
-                    
+
                 output = io.BytesIO()
                 excel_file_name = "Legislativo_Extraido.xlsx"
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -360,13 +399,13 @@ def run_app():
                 download_data = output
                 file_name = excel_file_name
                 mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            
+
             elif diario_escolhido == 'Administrativo':
                 pdf_bytes = uploaded_file.read()
                 with st.spinner('Extraindo dados do Diário Administrativo...'):
                     processor = AdministrativeProcessor(pdf_bytes)
                     csv_data = processor.to_csv()
-                    
+
                 if csv_data:
                     download_data = csv_data
                     file_name = "Administrativo_Extraido.csv"
@@ -392,7 +431,7 @@ def run_app():
                     mime=mime_type
                 )
                 st.info(f"O download do arquivo **{file_name}** está pronto.")
-        
+
         except Exception as e:
             st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
 
