@@ -113,35 +113,54 @@ class LegislativeProcessor:
     def process_requerimentos(self):
         """Extrai requerimentos do texto."""
         requerimentos = []
-        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-        rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+        
+        # Padrões para extração de requerimentos
+        # Padrão para requerimentos em geral
+        rq_pattern = re.compile(
+            r"REQUERIMENTO (?:Nº|nº)?\s*(\d{1,5}\.?\d{0,3})\s*[/](\d{4})", re.IGNORECASE
+        )
+        # Padrão para o cabeçalho de 'Proposições Não Recebidas'
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         
-        for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_pattern, "RQC")]:
-            for match in pattern.finditer(self.text):
-                start_idx = match.start()
-                next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
-                end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
-                block = self.text[start_idx:end_idx].strip()
-                nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
-                if not nums_in_block:
-                    continue
-                num_part, ano = nums_in_block[0].replace(".", "").split("/")
-                classif = classify_req(block)
-                requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
-        
+        # Encontra o bloco de 'Proposições Não Recebidas'
         header_match = nao_recebidas_header_pattern.search(self.text)
+        nao_recebidos_block = ""
         if header_match:
             start_idx = header_match.end()
-            next_section_pattern = re.compile(r"^\s*(\*?)\s*.*\s*(\*?)\s*$", re.MULTILINE)
+            next_section_pattern = re.compile(r"^\s*(\*+|-+\s*\S+.*?\s*|Diário do Legislativo)", re.MULTILINE | re.IGNORECASE)
             next_section_match = next_section_pattern.search(self.text, start_idx)
             end_idx = next_section_match.start() if next_section_match else len(self.text)
             nao_recebidos_block = self.text[start_idx:end_idx]
-            rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{2}\.?\d{3}/\d{4})", re.IGNORECASE)
-            for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
-                numero_ano = match.group(1).replace(".", "")
-                num_part, ano = numero_ano.split("/")
-                requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
+        
+        # Processa todos os requerimentos no texto
+        for match in rq_pattern.finditer(self.text):
+            numero_ano = match.group(1).replace(".", "")
+            ano = match.group(2)
+            
+            # Obtém o contexto para classificação
+            start_idx = match.start()
+            end_idx = match.end()
+            context_end = self.text.find('REQUERIMENTO Nº', end_idx)
+            if context_end == -1:
+                context_end = len(self.text)
+            segment = self.text[end_idx:context_end]
+            classif = classify_req(segment)
+            
+            # Verifica se o requerimento está no bloco de não recebidos
+            is_nao_recebido = header_match and (match.start() >= header_match.start() and match.end() <= header_match.end())
+            
+            # Decide a sigla e categoria
+            if 'REQUERIMENTO Nº' in self.text[start_idx-20:end_idx].upper():
+                sigla = "RQN"
+            elif 'REQUERIMENTO nº' in self.text[start_idx-20:end_idx].lower():
+                sigla = "RQC"
+            else:
+                sigla = "RQN"
+            
+            if is_nao_recebido:
+                classif = "NÃO RECEBIDO"
+            
+            requerimentos.append([sigla, numero_ano, ano, "", "", classif])
         
         unique_reqs = []
         seen = set()
@@ -150,6 +169,7 @@ class LegislativeProcessor:
             if key not in seen:
                 seen.add(key)
                 unique_reqs.append(r)
+        
         return pd.DataFrame(unique_reqs)
 
     def process_pareceres(self):
