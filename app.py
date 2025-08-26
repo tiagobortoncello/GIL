@@ -87,7 +87,7 @@ class LegislativeProcessor:
     def process_proposicoes(self):
         """Extrai proposições do texto."""
         pattern_prop = re.compile(
-            r"^\s*(?:- )?\s*(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})",
+            r"^\s*(?:- )?\s*(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,5}\.?\d{0,3}/\d{4})",
             re.MULTILINE
         )
         pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
@@ -115,17 +115,19 @@ class LegislativeProcessor:
     def process_requerimentos(self):
         """Extrai requerimentos do texto."""
         requerimentos = []
-        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-        rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+        # Corrigido para aceitar até 5 dígitos no número
+        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{1,5}\.?\d{0,3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+        rqc_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{1,5}\.?\d{0,3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_pattern, "RQC")]:
             for match in pattern.finditer(self.text):
                 start_idx = match.start()
-                next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
+                next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{1,5}\.?\d{0,3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
                 end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
                 block = self.text[start_idx:end_idx].strip()
-                nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+                # Corrigido para aceitar até 5 dígitos
+                nums_in_block = re.findall(r'\d{1,5}\.?\d{0,3}/\d{4}', block)
                 if not nums_in_block:
                     continue
                 num_part, ano = nums_in_block[0].replace(".", "").split("/")
@@ -139,7 +141,7 @@ class LegislativeProcessor:
             next_section_match = next_section_pattern.search(self.text, start_idx)
             end_idx = next_section_match.start() if next_section_match else len(self.text)
             nao_recebidos_block = self.text[start_idx:end_idx]
-            rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{2}\.?\d{3}/\d{4})", re.IGNORECASE)
+            rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{1,5}\.?\d{0,3}/\d{4})", re.IGNORECASE)
             for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
                 numero_ano = match.group(1).replace(".", "")
                 num_part, ano = numero_ano.split("/")
@@ -158,8 +160,6 @@ class LegislativeProcessor:
         """Extrai pareceres do texto."""
         found_projects = {}
         
-        # 1. Isola o texto relevante de pareceres, excluindo as votações.
-        # Atualização do padrão para o novo título
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
         votacao_pattern = re.compile(r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)", re.IGNORECASE)
         
@@ -168,21 +168,18 @@ class LegislativeProcessor:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
         
         pareceres_text = self.text[pareceres_start.end():]
-        
-        # Remove os blocos de votação do texto a ser processado
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
         
-        # 2. Processa o texto limpo para extrair os pareceres
         emenda_completa_pattern = re.compile(
-            r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
+            r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,5}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
         )
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
         project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
+            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,5}\.??\d{0,3})\s*/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
         
@@ -387,19 +384,4 @@ def run_app():
             if download_data:
                 st.success("Dados extraídos com sucesso! ✅")
                 st.divider()
-                st.download_button(
-                    label="Clique aqui para baixar o arquivo",
-                    data=download_data,
-                    file_name=file_name,
-                    mime=mime_type
-                )
-                st.info(f"O download do arquivo **{file_name}** está pronto.")
-        
-        except Exception as e:
-            st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
-
-# Executa a função principal
-if __name__ == "__main__":
-    run_app()
-
-
+                st.download_button
