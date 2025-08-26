@@ -54,6 +54,8 @@ def classify_req(segment):
         return "Moção de aplauso"
     if "r seja formulada manifestação de apoio" in segment_lower:
         return "Manifestação de apoio"
+    if "r seja formulada manifestação de protesto" in segment_lower:
+        return "Manifestação de protesto"
     return ""
 
 # --- Classes de Processamento ---
@@ -399,3 +401,4 @@ def run_app():
 # Executa a função principal
 if __name__ == "__main__":
     run_app()
+
