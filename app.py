@@ -112,26 +112,33 @@ class LegislativeProcessor:
 
     def process_requerimentos(self):
         """Extrai requerimentos do texto, incluindo RQC, RQN e os não recebidos."""
-        all_requerimentos = []
-
-        # Padrão para RQN e RQC. A busca por 'aprovado o ' diferencia os dois.
-        req_pattern = re.compile(
-            r"(aprovado o )?Requerimento(?:s)? (?:nº|Nº) (\d{1,2}\.?\d{3})[/](\d{4})",
-            re.IGNORECASE
-        )
+        requerimentos = []
         
-        # 1. Extrai RQN e RQC em uma única passagem
-        for match in req_pattern.finditer(self.text):
-            is_approved = match.group(1) is not None
-            num_part = match.group(2).replace('.', '')
-            ano = match.group(3)
+        # 1. Busca por RQC (Requerimentos que foram aprovados)
+        rqc_pattern = re.compile(r"aprovado o Requerimento(?:s)? nº (\d{1,2}\.?\d{3})[/](\d{4})", re.IGNORECASE)
+        for match in rqc_pattern.finditer(self.text):
+            num_part = match.group(1).replace('.', '')
+            ano = match.group(2)
+            requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
             
-            sigla = "RQC" if is_approved else "RQN"
-            classif = "Aprovado" if is_approved else classify_req(match.group(0))
-            
-            all_requerimentos.append([sigla, num_part, ano, "", "", classif])
-            
-        # 2. Extrai Requerimentos Não Recebidos (busca separada para este cabeçalho)
+        # 2. Busca por RQN (padrão antigo)
+        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+        rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+
+        for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
+            for match in pattern.finditer(self.text):
+                start_idx = match.start()
+                next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
+                end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
+                block = self.text[start_idx:end_idx].strip()
+                nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+                if not nums_in_block:
+                    continue
+                num_part, ano = nums_in_block[0].replace(".", "").split("/")
+                classif = classify_req(block)
+                requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+        
+        # 3. Busca por RQN não recebidos
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         header_match = nao_recebidas_header_pattern.search(self.text)
         if header_match:
@@ -144,12 +151,12 @@ class LegislativeProcessor:
             for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
                 numero_ano = match.group(1).replace(".", "")
                 num_part, ano = numero_ano.split("/")
-                all_requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
+                requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
         
-        # 3. Remove duplicatas
+        # Remove duplicatas
         unique_reqs = []
         seen = set()
-        for r in all_requerimentos:
+        for r in requerimentos:
             key = (r[0], r[1], r[2])
             if key not in seen:
                 seen.add(key)
