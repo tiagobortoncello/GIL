@@ -114,14 +114,17 @@ class LegislativeProcessor:
         """Extrai requerimentos do texto, incluindo RQC, RQN e os não recebidos."""
         requerimentos = []
         
-        # 1. Busca por RQC (Requerimentos que foram aprovados)
-        rqc_pattern = re.compile(r"aprovado o Requerimento(?:s)? nº (\d{1,2}\.?\d{3})[/](\d{4})", re.IGNORECASE)
-        for match in rqc_pattern.finditer(self.text):
+        # 1. Busca por RQC (hipótese de requerimentos aprovados que foram "recebidos")
+        rqc_pattern_aprovado = re.compile(
+            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)? nº (\d{1,2}\.?\d{3})[/](\d{4})", 
+            re.IGNORECASE
+        )
+        for match in rqc_pattern_aprovado.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
             
-        # 2. Busca por RQN (padrão antigo)
+        # 2. Busca por RQN e RQC (lógica original)
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
