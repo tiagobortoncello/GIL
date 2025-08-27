@@ -118,6 +118,8 @@ class LegislativeProcessor:
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         
         # 1. Busca por RQC (Requerimentos que foram aprovados)
+        rqc_pattern = re.compile(r"aprovado o requerimento nº (\d{1,2}\.?\d{3})[/](\d{4})", re.IGNORECASE)
+        
         for match in rqc_pattern.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
