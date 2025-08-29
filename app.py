@@ -121,44 +121,17 @@ class LegislativeProcessor:
         """Extrai requerimentos do texto, incluindo RQC, RQN e os não recebidos."""
         requerimentos = []
         
-        # Expressão regular para o padrão a ser ignorado
-        ignore_pattern = re.compile(
-            r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})",
-            re.IGNORECASE | re.DOTALL
-        )
-        
-        # Lista para armazenar requerimentos a serem ignorados
-        reqs_to_ignore = set()
-        for match in ignore_pattern.finditer(self.text):
-            numero_ano = match.group(1).replace(".", "")
-            reqs_to_ignore.add(numero_ano)
-
-        # 1. Nova busca focada no padrão "É recebido pela presidência..."
-        new_rqc_pattern = re.compile(
-            r"É recebido pela presidência, submetido a votação e aprovado o\s+Requerimento(?:s)?(?: nº| Nº)? (\d{1,5}\.?\d{0,3})[/](\d{4})",
-            re.IGNORECASE
-        )
-        for match in new_rqc_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
-            ano = match.group(2)
-            numero_ano = f"{num_part}/{ano}"
-            
-            if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
-        
-        # 2. Busca por RQC (hipótese de requerimentos aprovados que foram "recebidos")
+        # 1. Busca por RQC (hipótese de requerimentos aprovados que foram "recebidos")
         rqc_pattern_aprovado = re.compile(
-            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)? nº (\d{1,2}\.?\d{3})[/](\d{4})", 
             re.IGNORECASE
         )
         for match in rqc_pattern_aprovado.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
-            numero_ano = f"{num_part}/{ano}"
-            if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
+            requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
             
-        # 3. Busca por RQN e RQC (lógica original)
+        # 2. Busca por RQN e RQC (lógica original)
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
@@ -172,12 +145,10 @@ class LegislativeProcessor:
                 if not nums_in_block:
                     continue
                 num_part, ano = nums_in_block[0].replace(".", "").split("/")
-                numero_ano = f"{num_part}/{ano}"
-                if numero_ano not in reqs_to_ignore:
-                    classif = classify_req(block)
-                    requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+                classif = classify_req(block)
+                requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
         
-        # 4. Busca por RQN não recebidos
+        # 3. Busca por RQN não recebidos
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         header_match = nao_recebidas_header_pattern.search(self.text)
         if header_match:
@@ -190,8 +161,7 @@ class LegislativeProcessor:
             for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
                 numero_ano = match.group(1).replace(".", "")
                 num_part, ano = numero_ano.split("/")
-                if numero_ano not in reqs_to_ignore:
-                    requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
+                requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
         
         # Remove duplicatas
         unique_reqs = []
@@ -231,10 +201,8 @@ class LegislativeProcessor:
         )
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-        
-        # Padrão para capturar "xxx/xxxx" ou "x.xxx/xxxx" e "xx/xxxx" ou "x.xx/xxxx"
         project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
+            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,}\.??\d{3})\s*/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
         
@@ -273,7 +241,7 @@ class LegislativeProcessor:
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
             pareceres.append([sigla, numero, ano, type_str])
         return pd.DataFrame(pareceres)
-        
+    
     def process_all(self):
         """Orquestra a extração de todos os dados do Diário do Legislativo."""
         df_normas = self.process_normas()
