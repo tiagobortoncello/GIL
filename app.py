@@ -209,7 +209,6 @@ class LegislativeProcessor:
         found_projects = {}
         
         # 1. Isola o texto relevante de pareceres, excluindo as votações.
-        # Atualização do padrão para o novo título
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
         votacao_pattern = re.compile(r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)", re.IGNORECASE)
         
@@ -219,56 +218,48 @@ class LegislativeProcessor:
         
         pareceres_text = self.text[pareceres_start.end():]
         
-        # Remove os blocos de votação do texto a ser processado
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
         
         # 2. Processa o texto limpo para extrair os pareceres
-        emenda_completa_pattern = re.compile(
-            r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
-            re.IGNORECASE
-        )
-        emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
-        substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-        
-        # **ALTERAÇÃO IMPORTANTE AQUI**
-        # Padrão de busca para o número do projeto, que agora aceita qualquer número de dígitos.
+        # Padrão flexível para capturar o projeto, com ou sem a pontuação
         project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d+)\s*/\s*(\d{4})",
+            r"(PROJETO DE LEI|PL|PROJETO DE RESOLUÇÃO|PRE|PROPOSTA DE EMENDA À CONSTITUIÇÃO|PEC|PROJETO DE LEI COMPLEMENTAR|PLC|REQUERIMENTO) N[ºo]\s*(\d{1,}\.?\d{0,3})\s*\/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
         
-        for match in emenda_completa_pattern.finditer(clean_text):
-            numero = match.group(2).replace(".", "")
-            ano = match.group(3)
-            sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
-            project_key = (sigla, numero, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
+        # Padrão para capturar os títulos de substitutivo e emenda
+        substitutivo_pattern = re.compile(r"SUBSTITUTIVO N[ºo]\s*(\d+)", re.IGNORECASE)
+        emenda_pattern = re.compile(r"EMENDA N[ºo]\s*(\d+)", re.IGNORECASE)
 
+        # Usamos uma lista de tuplas para manter a ordem dos matches
         all_matches = sorted(
-            list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
+            list(project_pattern.finditer(clean_text)) +
+            list(substitutivo_pattern.finditer(clean_text)) +
+            list(emenda_pattern.finditer(clean_text)),
             key=lambda x: x.start()
         )
         
-        for title_match in all_matches:
-            text_before_title = clean_text[:title_match.start()]
-            last_project_match = None
-            for match in project_pattern.finditer(text_before_title):
+        last_project_match = None
+        for match in all_matches:
+            match_text = match.group(0).upper()
+            if "PROJETO DE LEI" in match_text or "PL" in match_text or "PROJETO DE RESOLUÇÃO" in match_text or "PRE" in match_text or "PROPOSTA DE EMENDA" in match_text or "PEC" in match_text or "PROJETO DE LEI COMPLEMENTAR" in match_text or "PLC" in match_text or "REQUERIMENTO" in match_text:
                 last_project_match = match
-            if last_project_match:
-                sigla_raw = last_project_match.group(2)
+            elif ("SUBSTITUTIVO" in match_text or "EMENDA" in match_text) and last_project_match:
+                # Se encontrarmos um substitutivo ou emenda e já tivermos um projeto anterior
+                sigla_raw = last_project_match.group(1)
                 sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                numero = last_project_match.group(3).replace(".", "")
-                ano = last_project_match.group(4)
+                numero = last_project_match.group(2).replace(".", "")
+                ano = last_project_match.group(3)
                 project_key = (sigla, numero, ano)
-                item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
+                
+                item_type = "SUBSTITUTIVO" if "SUBSTITUTIVO" in match_text else "EMENDA"
+                
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
-        
+
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
