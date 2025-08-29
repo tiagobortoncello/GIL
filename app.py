@@ -205,7 +205,9 @@ class LegislativeProcessor:
         return pd.DataFrame(unique_reqs)
 
     def process_pareceres(self):
-        """Extrai pareceres do texto."""
+        """
+        Extrai pareceres que incluem "a seguir apresentado" e o tipo de parecer.
+        """
         found_projects = {}
         
         # 1. Isola o texto relevante de pareceres, excluindo as votações.
@@ -217,49 +219,38 @@ class LegislativeProcessor:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
         
         pareceres_text = self.text[pareceres_start.end():]
-        
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
         
-        # 2. Processa o texto limpo para extrair os pareceres
-        # Padrão flexível para capturar o projeto, com ou sem a pontuação
-        project_pattern = re.compile(
-            r"(PROJETO DE LEI|PL|PROJETO DE RESOLUÇÃO|PRE|PROPOSTA DE EMENDA À CONSTITUIÇÃO|PEC|PROJETO DE LEI COMPLEMENTAR|PLC|REQUERIMENTO) N[ºo]\s*(\d{1,}\.?\d{0,3})\s*\/\s*(\d{4})",
-            re.IGNORECASE | re.DOTALL
+        # 2. Procura por "substitutivo/emenda ... a seguir apresentado"
+        substitutivo_emenda_pattern = re.compile(
+            r"([^\n]*)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d+)\s*\/\s*(\d{4})[^\n]*Substitutivo N[ºo]\s*(\d+)|([^\n]*)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d+)\s*\/\s*(\d{4})[^\n]*Emenda N[ºo]\s*(\d+)",
+            re.IGNORECASE
         )
-        
-        # Padrão para capturar os títulos de substitutivo e emenda
-        substitutivo_pattern = re.compile(r"SUBSTITUTIVO N[ºo]\s*(\d+)", re.IGNORECASE)
-        emenda_pattern = re.compile(r"EMENDA N[ºo]\s*(\d+)", re.IGNORECASE)
 
-        # Usamos uma lista de tuplas para manter a ordem dos matches
-        all_matches = sorted(
-            list(project_pattern.finditer(clean_text)) +
-            list(substitutivo_pattern.finditer(clean_text)) +
-            list(emenda_pattern.finditer(clean_text)),
-            key=lambda x: x.start()
-        )
-        
-        last_project_match = None
-        for match in all_matches:
-            match_text = match.group(0).upper()
-            if "PROJETO DE LEI" in match_text or "PL" in match_text or "PROJETO DE RESOLUÇÃO" in match_text or "PRE" in match_text or "PROPOSTA DE EMENDA" in match_text or "PEC" in match_text or "PROJETO DE LEI COMPLEMENTAR" in match_text or "PLC" in match_text or "REQUERIMENTO" in match_text:
-                last_project_match = match
-            elif ("SUBSTITUTIVO" in match_text or "EMENDA" in match_text) and last_project_match:
-                # Se encontrarmos um substitutivo ou emenda e já tivermos um projeto anterior
-                sigla_raw = last_project_match.group(1)
-                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                numero = last_project_match.group(2).replace(".", "")
-                ano = last_project_match.group(3)
-                project_key = (sigla, numero, ano)
-                
-                item_type = "SUBSTITUTIVO" if "SUBSTITUTIVO" in match_text else "EMENDA"
-                
-                if project_key not in found_projects:
-                    found_projects[project_key] = set()
-                found_projects[project_key].add(item_type)
+        for match in substitutivo_emenda_pattern.finditer(clean_text):
+            groups = match.groups()
+            
+            # Ajuste dinâmico dos grupos para capturar os dados corretamente
+            if groups[2] is not None:  # Match para Substitutivo
+                sigla_raw = groups[1]
+                numero_prop = groups[2]
+                ano_prop = groups[3]
+                item_type = "SUBSTITUTIVO"
+            else:  # Match para Emenda
+                sigla_raw = groups[6]
+                numero_prop = groups[7]
+                ano_prop = groups[8]
+                item_type = "EMENDA"
 
+            sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
+            project_key = (sigla, numero_prop, ano_prop)
+
+            if project_key not in found_projects:
+                found_projects[project_key] = set()
+            found_projects[project_key].add(item_type)
+        
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
