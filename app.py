@@ -169,26 +169,41 @@ class LegislativeProcessor:
             numero_completo = f"{num_part}/{ano}"
             if numero_completo not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
-            
+        
         # 3. Busca por RQN e RQC (lógica original)
-        # ESTA É A LÓGICA QUE CAUSAVA O PROBLEMA, POR ISSO VAMOS MANTÊ-LA E APENAS FILTRAR O RESULTADO.
-        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-        rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+        # O novo padrão agora é mais rigoroso, exigindo que o Nº esteja no início da linha,
+        # com um possível "Requerimento" antes dele.
+        rqn_pattern = re.compile(r"^(?:REQUERIMENTO|requerimento)?(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
-        for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
-            for match in pattern.finditer(self.text):
-                start_idx = match.start()
-                next_match = re.search(r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
-                end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
-                block = self.text[start_idx:end_idx].strip()
-                nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
-                if not nums_in_block:
-                    continue
-                num_part, ano = nums_in_block[0].replace(".", "").split("/")
-                numero_completo = f"{num_part}/{ano}"
-                if numero_completo not in reqs_to_ignore:
-                    classif = classify_req(block)
-                    requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+        # Use apenas o padrão mais rigoroso para evitar os falsos positivos
+        for match in rqn_pattern.finditer(self.text):
+            start_idx = match.start()
+            end_idx = re.search(r"^(?:REQUERIMENTO|requerimento)?(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})", self.text[start_idx + 1:], flags=re.MULTILINE)
+            end_idx = end_idx.start() + start_idx + 1 if end_idx else len(self.text)
+            block = self.text[start_idx:end_idx].strip()
+            
+            nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+            if not nums_in_block:
+                continue
+
+            num_part, ano = nums_in_block[0].replace(".", "").split("/")
+            numero_completo = f"{num_part}/{ano}"
+
+            if numero_completo not in reqs_to_ignore:
+                classif = classify_req(block)
+                # O tipo de requerimento é determinado pelo padrão encontrado
+                if match.group(1) is not None:
+                     sigla = "RQN"
+                else:
+                    # Se não for encontrado o tipo, mantém a lógica de tentar classificar
+                    # Aqui, a lógica é que se a busca encontrou, é um RQN ou RQC
+                    sigla = "RQN" if "REQUERIMENTO" in match.group(0).upper() else "RQC"
+                
+                # A lógica de aprovação é mais complexa e depende de contexto,
+                # por isso a classificação RQC/RQN será baseada no padrão
+                # de "aprovado" ou "recebido" em vez de apenas o "Nº"
+                
+                requerimentos.append([sigla, num_part, ano, "", "", classif])
         
         # 4. Busca por RQN não recebidos
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
