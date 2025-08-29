@@ -135,7 +135,7 @@ class LegislativeProcessor:
 
         # 1. Busca por RQC (hipótese de requerimentos aprovados que foram "recebidos")
         rqc_pattern_aprovado = re.compile(
-            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)? nº (\d{1,2}\.?\d{3})[/](\d{4})", 
+            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
         )
         for match in rqc_pattern_aprovado.finditer(self.text):
