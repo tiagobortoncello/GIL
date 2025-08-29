@@ -91,30 +91,39 @@ class LegislativeProcessor:
         pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
         ignore_redacao_final = re.compile(r"opinamos por se dar à proposição a seguinte redação final", re.IGNORECASE)
         ignore_publicada_antes = re.compile(r"foi publicad[ao] na edição anterior\.", re.IGNORECASE)
+        ignore_na_publicacao = re.compile(r"Na publicação da matéria em epígrafe", re.IGNORECASE)
+
         proposicoes = []
         for match in pattern_prop.finditer(self.text):
             start_idx = match.start()
             end_idx = match.end()
             contexto_antes = self.text[max(0, start_idx - 200):start_idx]
             contexto_depois = self.text[end_idx:end_idx + 250]
-            if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
+
+            # Ignorar casos indesejados
+            if (ignore_redacao_final.search(contexto_antes) or 
+                ignore_publicada_antes.search(contexto_depois) or
+                ignore_na_publicacao.search(contexto_depois)):
                 continue
+
             subseq_text = self.text[end_idx:end_idx + 250]
             if "(Redação do Vencido)" in subseq_text:
                 continue
+
             tipo_extenso = match.group(1)
             numero_ano = match.group(2).replace(".", "")
             numero, ano = numero_ano.split("/")
             sigla = TIPO_MAP_PROP[tipo_extenso]
             categoria = "Utilidade Pública" if pattern_utilidade.search(subseq_text) else ""
             proposicoes.append([sigla, numero, ano, '', '', categoria])
+
         return pd.DataFrame(proposicoes, columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria'])
 
     def process_requerimentos(self):
         """Extrai requerimentos do texto, incluindo RQC, RQN e os não recebidos."""
         requerimentos = []
         
-        # 1. Busca por RQC (hipótese de requerimentos aprovados que foram "recebidos")
+        # 1. Busca por RQC (aprovados)
         rqc_pattern_aprovado = re.compile(
             r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)? nº (\d{1,2}\.?\d{3})[/](\d{4})", 
             re.IGNORECASE
@@ -124,7 +133,7 @@ class LegislativeProcessor:
             ano = match.group(2)
             requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
             
-        # 2. Busca por RQN e RQC (lógica original)
+        # 2. Busca por RQN e RQC
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
@@ -141,7 +150,7 @@ class LegislativeProcessor:
                 classif = classify_req(block)
                 requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
         
-        # 3. Busca por RQN não recebidos
+        # 3. RQN não recebidos
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         header_match = nao_recebidas_header_pattern.search(self.text)
         if header_match:
@@ -171,8 +180,6 @@ class LegislativeProcessor:
         """Extrai pareceres do texto."""
         found_projects = {}
         
-        # 1. Isola o texto relevante de pareceres, excluindo as votações.
-        # Atualização do padrão para o novo título
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
         votacao_pattern = re.compile(r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)", re.IGNORECASE)
         
@@ -182,12 +189,10 @@ class LegislativeProcessor:
         
         pareceres_text = self.text[pareceres_start.end():]
         
-        # Remove os blocos de votação do texto a ser processado
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
         
-        # 2. Processa o texto limpo para extrair os pareceres
         emenda_completa_pattern = re.compile(
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
@@ -380,37 +385,4 @@ def run_app():
                 pdf_bytes = uploaded_file.read()
                 with st.spinner('Extraindo dados do Diário Administrativo...'):
                     processor = AdministrativeProcessor(pdf_bytes)
-                    csv_data = processor.to_csv()
-                    
-                if csv_data:
-                    download_data = csv_data
-                    file_name = "Administrativo_Extraido.csv"
-                    mime_type = "text/csv"
-                else:
-                    download_data = None
-                    file_name = None
-                    mime_type = None
-
-            else:  # Executivo (placeholder)
-                st.info("A funcionalidade para o Diário do Executivo ainda está em desenvolvimento.")
-                download_data = None
-                file_name = None
-                mime_type = None
-
-            if download_data:
-                st.success("Dados extraídos com sucesso! ✅")
-                st.divider()
-                st.download_button(
-                    label="Clique aqui para baixar o arquivo",
-                    data=download_data,
-                    file_name=file_name,
-                    mime=mime_type
-                )
-                st.info(f"O download do arquivo **{file_name}** está pronto.")
-        
-        except Exception as e:
-            st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
-
-# Executa a função principal
-if __name__ == "__main__":
-    run_app()
+                    csv_data = processor
