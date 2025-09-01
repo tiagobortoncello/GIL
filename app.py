@@ -6,7 +6,6 @@ from PyPDF2 import PdfReader
 import io
 import csv
 import fitz
-from datetime import datetime
 
 # --- Constantes e Mapeamentos ---
 TIPO_MAP_NORMA = {
@@ -310,13 +309,13 @@ class AdministrativeProcessor:
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
-        # Padrão para capturar a data de sanção (ex.: "Palácio da Inconfidência, 28 de agosto de 2025")
+        # Padrão atualizado para capturar a data de sanção
         regex_sancao = re.compile(
-            r'Palácio da Inconfidência,\s*(\d{1,2})\s*de\s*([a-zçã]+)\s*de\s*(\d{4})',
+            r'Palácio da Inconfidência,\s*(\d{1,2})\s*de\s*([a-zA-Zçãõê]+)\s*de\s*(\d{4})',
             re.IGNORECASE
         )
         
-        # Mapeamento de meses em português para números
+        # Mapeamento de meses em português, incluindo variações
         meses = {
             'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
             'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
@@ -325,10 +324,11 @@ class AdministrativeProcessor:
 
         for page_num, page in enumerate(doc, start=1):
             text = page.get_text("text")
-            text = re.sub(r'\s+', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
             
             # Encontrar todas as normas na página
-            for match in regex.finditer(text):
+            matches = list(regex.finditer(text))
+            for i, match in enumerate(matches):
                 tipo_texto = match.group(1)
                 numero = match.group(2).replace('.', '')
                 ano = match.group(3)
@@ -339,18 +339,28 @@ class AdministrativeProcessor:
                 }.get(tipo_texto, None)
                 
                 if sigla:
-                    # Procurar a data de sanção após a norma
+                    # Definir o bloco de texto para buscar a data de sanção
                     start_idx = match.start()
-                    block_text = text[start_idx:start_idx + 1000]  # Limitar a busca a um bloco após a norma
+                    # Se houver próxima norma, limitar até ela; caso contrário, usar o fim da página
+                    end_idx = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                    block_text = text[start_idx:end_idx]
+                    
+                    # Procurar a data de sanção no bloco
                     sancao_match = regex_sancao.search(block_text)
                     data_sancao = ""
                     if sancao_match:
-                        dia = sancao_match.group(1).zfill(2)  # Garante dois dígitos para o dia
+                        dia = sancao_match.group(1).zfill(2)
                         mes_texto = sancao_match.group(2).lower()
                         ano_sancao = sancao_match.group(3)
-                        mes = meses.get(mes_texto, '')
-                        if mes:
+                        # Normalizar mês para lidar com variações
+                        mes_normalizado = next((m for m in meses if mes_texto.startswith(m[:3])), None)
+                        if mes_normalizado:
+                            mes = meses[mes_normalizado]
                             data_sancao = f"{dia}/{mes}/{ano_sancao}"
+                        else:
+                            st.warning(f"Mês '{mes_texto}' não reconhecido na página {page_num}.")
+                    else:
+                        st.warning(f"Data de sanção não encontrada para {sigla} {numero}/{ano} na página {page_num}.")
                     
                     resultados.append([page_num, 1, data_sancao, sigla, numero, ano])
             
