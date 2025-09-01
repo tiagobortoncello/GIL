@@ -8,8 +8,18 @@ import csv
 import fitz
 import locale
 
-# Configurar o locale para português para lidar com nomes de meses
-locale.setlocale(locale.LC_TIME, 'pt_BR.utf8')
+# --- TENTATIVA DE CONFIGURAR O LOCALE ---
+try:
+    locale.setlocale(locale.LC_TIME, 'pt_BR.utf8')
+except locale.Error:
+    # Caso o locale não esteja disponível, usaremos um mapeamento manual.
+    st.warning("O locale 'pt_BR.utf8' não está disponível. Usando mapeamento manual de datas.")
+    # Mapeamento para uso posterior.
+    MESES_MAP_MANUAL = {
+        'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
+        'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+        'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+    }
 
 # --- Constantes e Mapeamentos ---
 TIPO_MAP_NORMA = {
@@ -63,18 +73,20 @@ def classify_req(segment):
 def parse_date(date_str):
     """
     Converte uma string de data 'dia de mês de ano' para o formato 'DD/MM/AAAA'.
+    Usa locale se disponível, senão, mapeamento manual.
     """
-    meses_map = {
-        'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
-        'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
-        'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
-    }
-    partes = date_str.split(' de ')
-    if len(partes) == 3:
-        dia, mes_nome, ano = partes
-        mes_num = meses_map.get(mes_nome.lower(), None)
-        if mes_num:
-            return f"{dia.zfill(2)}/{mes_num}/{ano}"
+    try:
+        # Tenta usar o locale
+        dt = locale.strptime(date_str, '%d de %B de %Y')
+        return dt.strftime('%d/%m/%Y')
+    except (locale.Error, ValueError):
+        # Fallback para o mapeamento manual
+        partes = date_str.lower().split(' de ')
+        if len(partes) == 3:
+            dia, mes_nome, ano = partes
+            mes_num = MESES_MAP_MANUAL.get(mes_nome.lower(), None)
+            if mes_num:
+                return f"{dia.zfill(2)}/{mes_num}/{ano}"
     return ""
 
 # --- Classes de Processamento ---
