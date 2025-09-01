@@ -6,20 +6,6 @@ from PyPDF2 import PdfReader
 import io
 import csv
 import fitz
-import locale
-
-# --- TENTATIVA DE CONFIGURAR O LOCALE ---
-try:
-    locale.setlocale(locale.LC_TIME, 'pt_BR.utf8')
-except locale.Error:
-    # Caso o locale não esteja disponível, usaremos um mapeamento manual.
-    st.warning("O locale 'pt_BR.utf8' não está disponível. Usando mapeamento manual de datas.")
-    # Mapeamento para uso posterior.
-    MESES_MAP_MANUAL = {
-        'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
-        'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
-        'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
-    }
 
 # --- Constantes e Mapeamentos ---
 TIPO_MAP_NORMA = {
@@ -68,25 +54,6 @@ def classify_req(segment):
         return "Moção de aplauso"
     if "r seja formulada manifestação de apoio" in segment_lower:
         return "Manifestação de apoio"
-    return ""
-
-def parse_date(date_str):
-    """
-    Converte uma string de data 'dia de mês de ano' para o formato 'DD/MM/AAAA'.
-    Usa locale se disponível, senão, mapeamento manual.
-    """
-    try:
-        # Tenta usar o locale
-        dt = locale.strptime(date_str, '%d de %B de %Y')
-        return dt.strftime('%d/%m/%Y')
-    except (locale.Error, ValueError):
-        # Fallback para o mapeamento manual
-        partes = date_str.lower().split(' de ')
-        if len(partes) == 3:
-            dia, mes_nome, ano = partes
-            mes_num = MESES_MAP_MANUAL.get(mes_nome.lower(), None)
-            if mes_num:
-                return f"{dia.zfill(2)}/{mes_num}/{ano}"
     return ""
 
 # --- Classes de Processamento ---
@@ -338,29 +305,15 @@ class AdministrativeProcessor:
             return None
         
         resultados = []
-        regex_norma = re.compile(
+        regex = re.compile(
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
-        regex_data = re.compile(r'\d{1,2}\s+de\s+[a-z]+\s+de\s+\d{4}', re.IGNORECASE)
         
-        for i, page in enumerate(doc):
-            page_number = i + 1
+        for page in doc:
             text = page.get_text("text")
-            
-            # Encontrar todas as ocorrências de normas na página
-            norma_matches = list(regex_norma.finditer(text))
-            dcs_match = regex_dcs.search(text)
-            
-            # Adicionar o DCS se encontrado
-            if dcs_match:
-                # Busca por data no restante da página a partir do match
-                data_match = regex_data.search(text, dcs_match.end())
-                sancao = parse_date(data_match.group(0)) if data_match else "Não encontrada"
-                resultados.append([str(page_number), '1', sancao, "DCS", "", ""])
-        
-            # Iterar sobre as normas encontradas
-            for j, match in enumerate(norma_matches):
+            text = re.sub(r'\s+', ' ', text)
+            for match in regex.finditer(text):
                 tipo_texto = match.group(1)
                 numero = match.group(2).replace('.', '')
                 ano = match.group(3)
@@ -371,15 +324,10 @@ class AdministrativeProcessor:
                 }.get(tipo_texto, None)
                 
                 if sigla:
-                    # Define o final do bloco da norma atual como o início da próxima ou o final da página
-                    end_of_block = norma_matches[j + 1].start() if j + 1 < len(norma_matches) else len(text)
-                    block_text = text[match.start():end_of_block]
-                    
-                    # Busca a última data no bloco de texto da norma
-                    datas_encontradas = regex_data.findall(block_text)
-                    sancao = parse_date(datas_encontradas[-1]) if datas_encontradas else "Não encontrada"
-                    
-                    resultados.append([str(page_number), '1', sancao, sigla, numero, ano])
+                    resultados.append([sigla, numero, ano])
+            
+            if regex_dcs.search(text):
+                resultados.append(["DCS", "", ""])
         
         doc.close()
         return resultados
@@ -392,8 +340,6 @@ class AdministrativeProcessor:
         
         output_csv = io.StringIO()
         writer = csv.writer(output_csv, delimiter="\t")
-        # Adiciona o cabeçalho
-        writer.writerow(['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano'])
         writer.writerows(resultados)
         return output_csv.getvalue().encode('utf-8')
 
