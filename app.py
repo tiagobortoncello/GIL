@@ -309,26 +309,32 @@ class AdministrativeProcessor:
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
-        # Padrão atualizado para capturar a data de sanção
+        # Padrão para capturar a data de sanção
         regex_sancao = re.compile(
             r'Palácio da Inconfidência,\s*(\d{1,2})\s*de\s*([a-zA-Zçãõê]+)\s*de\s*(\d{4})',
             re.IGNORECASE
         )
         
-        # Mapeamento de meses em português, incluindo variações
+        # Mapeamento de meses em português
         meses = {
             'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
             'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
             'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
         }
 
+        # Extrair todo o texto do PDF
+        full_text = ""
+        page_texts = []
         for page_num, page in enumerate(doc, start=1):
             text = page.get_text("text")
             text = re.sub(r'\s+', ' ', text).strip()
-            
-            # Encontrar todas as normas na página
-            matches = list(regex.finditer(text))
-            for i, match in enumerate(matches):
+            page_texts.append((page_num, text))
+            full_text += text + " "
+
+        # Encontrar todas as normas no texto completo
+        normas = []
+        for page_num, text in page_texts:
+            for match in regex.finditer(text):
                 tipo_texto = match.group(1)
                 numero = match.group(2).replace('.', '')
                 ano = match.group(3)
@@ -337,34 +343,39 @@ class AdministrativeProcessor:
                     "PORTARIA DGE": "PRT",
                     "ORDEM DE SERVIÇO PRES/PSEC": "OSV"
                 }.get(tipo_texto, None)
-                
                 if sigla:
-                    # Definir o bloco de texto para buscar a data de sanção
-                    start_idx = match.start()
-                    # Se houver próxima norma, limitar até ela; caso contrário, usar o fim da página
-                    end_idx = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-                    block_text = text[start_idx:end_idx]
-                    
-                    # Procurar a data de sanção no bloco
-                    sancao_match = regex_sancao.search(block_text)
-                    data_sancao = ""
-                    if sancao_match:
-                        dia = sancao_match.group(1).zfill(2)
-                        mes_texto = sancao_match.group(2).lower()
-                        ano_sancao = sancao_match.group(3)
-                        # Normalizar mês para lidar com variações
-                        mes_normalizado = next((m for m in meses if mes_texto.startswith(m[:3])), None)
-                        if mes_normalizado:
-                            mes = meses[mes_normalizado]
-                            data_sancao = f"{dia}/{mes}/{ano_sancao}"
-                        else:
-                            st.warning(f"Mês '{mes_texto}' não reconhecido na página {page_num}.")
-                    else:
-                        st.warning(f"Data de sanção não encontrada para {sigla} {numero}/{ano} na página {page_num}.")
-                    
-                    resultados.append([page_num, 1, data_sancao, sigla, numero, ano])
+                    normas.append((page_num, sigla, numero, ano, match.start()))
+
+        # Processar cada norma para encontrar a data de sanção
+        for i, (page_num, sigla, numero, ano, start_idx) in enumerate(normas):
+            # Definir o bloco de texto para buscar a data de sanção
+            # Começa do início da norma no texto completo
+            norm_start_idx = sum(len(page_texts[j][1]) + 1 for j in range(page_texts[page_num-1][0] - 1)) + start_idx
+            # Termina no início da próxima norma ou no fim do texto
+            end_idx = normas[i + 1][4] if i + 1 < len(normas) else len(full_text)
+            block_text = full_text[norm_start_idx:end_idx]
             
-            # Processar DECISÃO DA 1ª-SECRETARIA
+            # Procurar a data de sanção no bloco
+            sancao_match = regex_sancao.search(block_text)
+            data_sancao = ""
+            if sancao_match:
+                dia = sancao_match.group(1).zfill(2)
+                mes_texto = sancao_match.group(2).lower()
+                ano_sancao = sancao_match.group(3)
+                # Normalizar mês para lidar com variações
+                mes_normalizado = next((m for m in meses if mes_texto.startswith(m[:3])), None)
+                if mes_normalizado:
+                    mes = meses[mes_normalizado]
+                    data_sancao = f"{dia}/{mes}/{ano_sancao}"
+                else:
+                    st.warning(f"Mês '{mes_texto}' não reconhecido para {sigla} {numero}/{ano} (iniciada na página {page_num}).")
+            else:
+                st.warning(f"Data de sanção não encontrada para {sigla} {numero}/{ano} (iniciada na página {page_num}).")
+            
+            resultados.append([page_num, 1, data_sancao, sigla, numero, ano])
+
+        # Processar DECISÃO DA 1ª-SECRETARIA
+        for page_num, text in page_texts:
             if regex_dcs.search(text):
                 resultados.append([page_num, 1, "", "DCS", "", ""])
         
