@@ -291,7 +291,7 @@ class LegislativeProcessor:
 class AdministrativeProcessor:
     """
     Classe para processar bytes de um Diário Administrativo,
-    extraindo normas e retornando dados CSV com colunas adicionais.
+    extraindo normas e retornando dados CSV.
     """
     def __init__(self, pdf_bytes):
         self.pdf_bytes = pdf_bytes
@@ -309,31 +309,10 @@ class AdministrativeProcessor:
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
-        # Padrão para capturar a data de sanção
-        regex_sancao = re.compile(
-            r'Palácio da Inconfidência,\s*(\d{1,2})\s*de\s*([a-zA-Zçãõê]+)\s*de\s*(\d{4})',
-            re.IGNORECASE
-        )
         
-        # Mapeamento de meses em português
-        meses = {
-            'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
-            'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
-            'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
-        }
-
-        # Extrair todo o texto do PDF
-        full_text = ""
-        page_texts = []
-        for page_num, page in enumerate(doc, start=1):
+        for page in doc:
             text = page.get_text("text")
-            text = re.sub(r'\s+', ' ', text).strip()
-            page_texts.append((page_num, text))
-            full_text += text + " "
-
-        # Encontrar todas as normas no texto completo
-        normas = []
-        for page_num, text in page_texts:
+            text = re.sub(r'\s+', ' ', text)
             for match in regex.finditer(text):
                 tipo_texto = match.group(1)
                 numero = match.group(2).replace('.', '')
@@ -343,41 +322,12 @@ class AdministrativeProcessor:
                     "PORTARIA DGE": "PRT",
                     "ORDEM DE SERVIÇO PRES/PSEC": "OSV"
                 }.get(tipo_texto, None)
+                
                 if sigla:
-                    normas.append((page_num, sigla, numero, ano, match.start()))
-
-        # Processar cada norma para encontrar a data de sanção
-        for i, (page_num, sigla, numero, ano, start_idx) in enumerate(normas):
-            # Definir o bloco de texto para buscar a data de sanção
-            # Começa do início da norma no texto completo
-            norm_start_idx = sum(len(page_texts[j][1]) + 1 for j in range(page_texts[page_num-1][0] - 1)) + start_idx
-            # Termina no início da próxima norma ou no fim do texto
-            end_idx = normas[i + 1][4] if i + 1 < len(normas) else len(full_text)
-            block_text = full_text[norm_start_idx:end_idx]
+                    resultados.append([sigla, numero, ano])
             
-            # Procurar a data de sanção no bloco
-            sancao_match = regex_sancao.search(block_text)
-            data_sancao = ""
-            if sancao_match:
-                dia = sancao_match.group(1).zfill(2)
-                mes_texto = sancao_match.group(2).lower()
-                ano_sancao = sancao_match.group(3)
-                # Normalizar mês para lidar com variações
-                mes_normalizado = next((m for m in meses if mes_texto.startswith(m[:3])), None)
-                if mes_normalizado:
-                    mes = meses[mes_normalizado]
-                    data_sancao = f"{dia}/{mes}/{ano_sancao}"
-                else:
-                    st.warning(f"Mês '{mes_texto}' não reconhecido para {sigla} {numero}/{ano} (iniciada na página {page_num}).")
-            else:
-                st.warning(f"Data de sanção não encontrada para {sigla} {numero}/{ano} (iniciada na página {page_num}).")
-            
-            resultados.append([page_num, 1, data_sancao, sigla, numero, ano])
-
-        # Processar DECISÃO DA 1ª-SECRETARIA
-        for page_num, text in page_texts:
             if regex_dcs.search(text):
-                resultados.append([page_num, 1, "", "DCS", "", ""])
+                resultados.append(["DCS", "", ""])
         
         doc.close()
         return resultados
@@ -390,8 +340,6 @@ class AdministrativeProcessor:
         
         output_csv = io.StringIO()
         writer = csv.writer(output_csv, delimiter="\t")
-        # Escrever cabeçalho
-        writer.writerow(["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano"])
         writer.writerows(resultados)
         return output_csv.getvalue().encode('utf-8')
 
