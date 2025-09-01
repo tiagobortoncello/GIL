@@ -6,6 +6,7 @@ from PyPDF2 import PdfReader
 import io
 import csv
 import fitz
+from datetime import datetime
 
 # --- Constantes e Mapeamentos ---
 TIPO_MAP_NORMA = {
@@ -291,7 +292,7 @@ class LegislativeProcessor:
 class AdministrativeProcessor:
     """
     Classe para processar bytes de um Diário Administrativo,
-    extraindo normas e retornando dados CSV.
+    extraindo normas e retornando dados CSV com colunas adicionais.
     """
     def __init__(self, pdf_bytes):
         self.pdf_bytes = pdf_bytes
@@ -309,10 +310,24 @@ class AdministrativeProcessor:
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
+        # Padrão para capturar a data de sanção (ex.: "Palácio da Inconfidência, 28 de agosto de 2025")
+        regex_sancao = re.compile(
+            r'Palácio da Inconfidência,\s*(\d{1,2})\s*de\s*([a-zçã]+)\s*de\s*(\d{4})',
+            re.IGNORECASE
+        )
         
-        for page in doc:
+        # Mapeamento de meses em português para números
+        meses = {
+            'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
+            'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+            'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+        }
+
+        for page_num, page in enumerate(doc, start=1):
             text = page.get_text("text")
             text = re.sub(r'\s+', ' ', text)
+            
+            # Encontrar todas as normas na página
             for match in regex.finditer(text):
                 tipo_texto = match.group(1)
                 numero = match.group(2).replace('.', '')
@@ -324,10 +339,24 @@ class AdministrativeProcessor:
                 }.get(tipo_texto, None)
                 
                 if sigla:
-                    resultados.append([sigla, numero, ano])
+                    # Procurar a data de sanção após a norma
+                    start_idx = match.start()
+                    block_text = text[start_idx:start_idx + 1000]  # Limitar a busca a um bloco após a norma
+                    sancao_match = regex_sancao.search(block_text)
+                    data_sancao = ""
+                    if sancao_match:
+                        dia = sancao_match.group(1).zfill(2)  # Garante dois dígitos para o dia
+                        mes_texto = sancao_match.group(2).lower()
+                        ano_sancao = sancao_match.group(3)
+                        mes = meses.get(mes_texto, '')
+                        if mes:
+                            data_sancao = f"{dia}/{mes}/{ano_sancao}"
+                    
+                    resultados.append([page_num, 1, data_sancao, sigla, numero, ano])
             
+            # Processar DECISÃO DA 1ª-SECRETARIA
             if regex_dcs.search(text):
-                resultados.append(["DCS", "", ""])
+                resultados.append([page_num, 1, "", "DCS", "", ""])
         
         doc.close()
         return resultados
@@ -340,6 +369,8 @@ class AdministrativeProcessor:
         
         output_csv = io.StringIO()
         writer = csv.writer(output_csv, delimiter="\t")
+        # Escrever cabeçalho
+        writer.writerow(["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano"])
         writer.writerows(resultados)
         return output_csv.getvalue().encode('utf-8')
 
