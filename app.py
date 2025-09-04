@@ -216,20 +216,28 @@ class LegislativeProcessor:
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
-        votacao_pattern = re.compile(
-            r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
+        
+        # --- Alteração para corrigir o problema ---
+        # Removendo blocos de "Votação do Requerimento" do texto antes da análise
+        votacao_req_pattern = re.compile(
+            r"Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
             re.IGNORECASE
         )
+        # --- Fim da alteração ---
+
         pareceres_start = pareceres_start_pattern.search(self.text)
         if not pareceres_start:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
 
         pareceres_text = self.text[pareceres_start.end():]
-        # remove blocos de votação
+        
+        # --- Alteração para corrigir o problema ---
+        # Remove os blocos de votação do texto
         clean_text = pareceres_text
-        for match in votacao_pattern.finditer(pareceres_text):
+        for match in votacao_req_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
-
+        # --- Fim da alteração ---
+        
         # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
         emenda_projeto_lei_pattern = re.compile(
             r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
