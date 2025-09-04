@@ -219,6 +219,7 @@ class LegislativeProcessor:
         
         # --- Alteração para corrigir o problema ---
         # Removendo blocos de "Votação do Requerimento" do texto antes da análise
+        # A expressão regular foi corrigida para remover a parentefe desbalanceada
         votacao_req_pattern = re.compile(
             r"Votação do Requerimento[\s\S]*?(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
             re.IGNORECASE
@@ -233,9 +234,7 @@ class LegislativeProcessor:
         
         # --- Alteração para corrigir o problema ---
         # Remove os blocos de votação do texto
-        clean_text = pareceres_text
-        for match in votacao_req_pattern.finditer(pareceres_text):
-            clean_text = clean_text.replace(match.group(0), "")
+        clean_text = votacao_req_pattern.sub("", pareceres_text)
         # --- Fim da alteração ---
         
         # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
