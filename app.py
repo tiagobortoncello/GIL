@@ -220,7 +220,7 @@ class LegislativeProcessor:
         # --- Alteração para corrigir o problema ---
         # Removendo blocos de "Votação do Requerimento" do texto antes da análise
         votacao_req_pattern = re.compile(
-            r"Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
+            r"Votação do Requerimento[\s\S]*?(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
             re.IGNORECASE
         )
         # --- Fim da alteração ---
