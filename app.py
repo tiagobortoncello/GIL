@@ -11,7 +11,7 @@ import pandas as pd
 from PyPDF2 import PdfReader
 import io
 import csv
-import fitz  # PyMuPDF
+import fitz # PyMuPDF
 import requests
 
 # --- Constantes e Mapeamentos ---
@@ -42,7 +42,8 @@ SIGLA_MAP_PARECER = {
     "proposta de emenda à constituição": "PEC",
     "pec": "PEC",
     "projeto de lei complementar": "PLC",
-    "plc": "PLC"
+    "plc": "PLC",
+    "emendas ao projeto de lei": "EMENDA"
 }
 
 # --- Funções Utilitárias ---
@@ -229,6 +230,19 @@ class LegislativeProcessor:
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
 
+        # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
+        emenda_projeto_lei_pattern = re.compile(
+            r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in emenda_projeto_lei_pattern.finditer(clean_text):
+            numero_raw = match.group(1).replace('.', '')
+            ano = match.group(2)
+            project_key = ("PL", numero_raw, ano)
+            if project_key not in found_projects:
+                found_projects[project_key] = set()
+            found_projects[project_key].add("EMENDA")
+
         emenda_completa_pattern = re.compile(
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
@@ -270,6 +284,16 @@ class LegislativeProcessor:
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
+                
+        # Adiciona a nova regra
+        emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
+        for match in emenda_projeto_lei_pattern.finditer(clean_text):
+            numero_raw = match.group(1).replace('.', '')
+            ano = match.group(2)
+            project_key = ("PL", numero_raw, ano)
+            if project_key not in found_projects:
+                found_projects[project_key] = set()
+            found_projects[project_key].add("EMENDA")
 
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
