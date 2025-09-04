@@ -11,7 +11,7 @@ import pandas as pd
 from PyPDF2 import PdfReader
 import io
 import csv
-import fitz  # PyMuPDF
+import fitz # PyMuPDF
 import requests
 
 # --- Constantes e Mapeamentos ---
@@ -119,11 +119,11 @@ class LegislativeProcessor:
             numero, ano = numero_ano.split("/")
             sigla = TIPO_MAP_PROP[tipo_extenso]
             categoria = "Utilidade Pública" if pattern_utilidade.search(subseq_text) else ""
-            proposicoes.append([sigla, numero, ano, '', '', categoria])
+            proposicoes.append([sigla, numero, ano, categoria, '', ''])
 
         return pd.DataFrame(
             proposicoes,
-            columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria']
+            columns=['Sigla', 'Número', 'Ano', 'Categoria', 'Categoria 1', 'Categoria 2']
         )
 
     def process_requerimentos(self) -> pd.DataFrame:
@@ -147,7 +147,7 @@ class LegislativeProcessor:
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
+                requerimentos.append(["RQC", num_part, ano, "Aprovado", "", ""])
         
         rqc_pattern_aprovado = re.compile(
             r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
@@ -158,7 +158,7 @@ class LegislativeProcessor:
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
+                requerimentos.append(["RQC", num_part, ano, "Aprovado", "", ""])
 
         # 2) RQN e RQC (padrão antigo)
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
@@ -177,7 +177,7 @@ class LegislativeProcessor:
                 numero_ano = f"{num_part}/{ano}"
                 if numero_ano not in reqs_to_ignore:
                     classif = classify_req(block)
-                    requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+                    requerimentos.append([sigla_prefix, num_part, ano, classif, "", ""])
 
         # 3) RQN não recebidos
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
@@ -193,7 +193,7 @@ class LegislativeProcessor:
                 numero_ano = match.group(1).replace(".", "")
                 num_part, ano = numero_ano.split("/")
                 if numero_ano not in reqs_to_ignore:
-                    requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
+                    requerimentos.append(["RQN", num_part, ano, "NÃO RECEBIDO", "", ""])
 
         # Remove duplicatas
         unique_reqs = []
