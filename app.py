@@ -11,7 +11,7 @@ import pandas as pd
 from PyPDF2 import PdfReader
 import io
 import csv
-import fitz # PyMuPDF
+import fitz  # PyMuPDF
 import requests
 
 # --- Constantes e Mapeamentos ---
@@ -47,9 +47,7 @@ SIGLA_MAP_PARECER = {
 
 # --- Funções Utilitárias ---
 def classify_req(segment: str) -> str:
-    """
-    Classifica um requerimento com base no texto do segmento.
-    """
+    """ Classifica um requerimento com base no texto do segmento. """
     segment_lower = segment.lower()
     if "seja formulado voto de congratulações" in segment_lower:
         return "Voto de congratulações"
@@ -65,10 +63,7 @@ def classify_req(segment: str) -> str:
 
 # --- Classes de Processamento ---
 class LegislativeProcessor:
-    """
-    Processa o texto de um Diário do Legislativo,
-    extraindo normas, proposições, requerimentos e pareceres.
-    """
+    """ Processa o texto de um Diário do Legislativo, extraindo normas, proposições, requerimentos e pareceres. """
     def __init__(self, text: str):
         self.text = text
 
@@ -97,19 +92,18 @@ class LegislativeProcessor:
         ignore_redacao_final = re.compile(r"opinamos por se dar à proposição a seguinte redação final", re.IGNORECASE)
         ignore_publicada_antes = re.compile(r"foi publicad[ao] na edição anterior\.", re.IGNORECASE)
         ignore_em_epigrafe = re.compile(r"Na publicação da matéria em epígrafe", re.IGNORECASE)
-        
+
         proposicoes = []
         for match in pattern_prop.finditer(self.text):
             start_idx = match.start()
             end_idx = match.end()
             contexto_antes = self.text[max(0, start_idx - 200):start_idx]
             contexto_depois = self.text[end_idx:end_idx + 250]
-            
+
             if ignore_em_epigrafe.search(contexto_depois):
                 continue
             if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
                 continue
-
             subseq_text = self.text[end_idx:end_idx + 250]
             if "(Redação do Vencido)" in subseq_text:
                 continue
@@ -119,11 +113,11 @@ class LegislativeProcessor:
             numero, ano = numero_ano.split("/")
             sigla = TIPO_MAP_PROP[tipo_extenso]
             categoria = "UP" if pattern_utilidade.search(subseq_text) else ""
-            proposicoes.append([sigla, numero, ano, "", "", categoria])
+            proposicoes.append([sigla, numero, ano, categoria])
 
         return pd.DataFrame(
             proposicoes,
-            columns=['Sigla', 'Número', 'Ano', 'Categoria 1', 'Categoria 2', 'Categoria']
+            columns=['Sigla', 'Número', 'Ano', 'Categoria']
         )
 
     def process_requerimentos(self) -> pd.DataFrame:
@@ -148,7 +142,7 @@ class LegislativeProcessor:
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
-        
+
         rqc_pattern_aprovado = re.compile(
             r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
@@ -163,7 +157,6 @@ class LegislativeProcessor:
         # 2) RQN e RQC (padrão antigo)
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
             for match in pattern.finditer(self.text):
                 start_idx = match.start()
@@ -216,8 +209,8 @@ class LegislativeProcessor:
         pareceres_start = pareceres_start_pattern.search(self.text)
         if not pareceres_start:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
-        pareceres_text = self.text[pareceres_start.end():]
 
+        pareceres_text = self.text[pareceres_start.end():]
         # remove blocos de votação
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
@@ -229,7 +222,6 @@ class LegislativeProcessor:
         )
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-
         project_pattern = re.compile(
             r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
@@ -254,6 +246,7 @@ class LegislativeProcessor:
             last_project_match = None
             for match in project_pattern.finditer(text_before_title):
                 last_project_match = match
+
             if last_project_match:
                 sigla_raw = last_project_match.group(2)
                 sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
@@ -285,10 +278,7 @@ class LegislativeProcessor:
         }
 
 class AdministrativeProcessor:
-    """
-    Processa bytes de um Diário Administrativo,
-    extraindo normas e retornando dados CSV.
-    """
+    """ Processa bytes de um Diário Administrativo, extraindo normas e retornando dados CSV. """
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
@@ -298,13 +288,13 @@ class AdministrativeProcessor:
         except Exception as e:
             st.error(f"Erro ao abrir o arquivo PDF: {e}")
             return None
-        
+
         resultados = []
         regex = re.compile(
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
-        
+
         for page in doc:
             text = page.get_text("text")
             text = re.sub(r'\s+', ' ', text)
@@ -321,7 +311,6 @@ class AdministrativeProcessor:
                     resultados.append([sigla, numero, ano])
             if regex_dcs.search(text):
                 resultados.append(["DCS", "", ""])
-        
         doc.close()
         return resultados
 
@@ -337,43 +326,41 @@ class AdministrativeProcessor:
 # --- Função Principal da Aplicação Streamlit ---
 def run_app():
     st.markdown("""
-    <style>
-    .title-container {
-        text-align: center;
-        background-color: #f0f0f0;
-        padding: 20px;
-        border-radius: 10px;
-        margin-bottom: 20px;
-    }
-    .main-title {
-        color: #d11a2a;
-        font-size: 3em;
-        font-weight: bold;
-        margin-bottom: 0;
-    }
-    .subtitle-gil {
-        color: gray;
-        font-size: 1.5em;
-        margin-top: 5px;
-    }
-    </style>
+        <style>
+        .title-container {
+            text-align: center;
+            background-color: #f0f0f0;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .main-title {
+            color: #d11a2a;
+            font-size: 3em;
+            font-weight: bold;
+            margin-bottom: 0;
+        }
+        .subtitle-gil {
+            color: gray;
+            font-size: 1.5em;
+            margin-top: 5px;
+        }
+        </style>
     """, unsafe_allow_html=True)
-    
+
     st.markdown("""
-    <div class="title-container">
-    <h1 class="main-title">Extrator de Documentos Oficiais</h1>
-    <h4 class="subtitle-gil">GERÊNCIA DE INFORMAÇÃO LEGISLATIVA - GIL/GDI</h4>
-    </div>
+        <div class="title-container">
+            <h1 class="main-title">Extrator de Documentos Oficiais</h1>
+            <h4 class="subtitle-gil">GERÊNCIA DE INFORMAÇÃO LEGISLATIVA - GIL/GDI</h4>
+        </div>
     """, unsafe_allow_html=True)
-    
+
     st.divider()
-    
     diario_escolhido = st.radio(
         "Selecione o tipo de Diário para extração:",
         ('Legislativo', 'Administrativo', 'Executivo (Em breve)'),
         horizontal=True
     )
-    
     st.divider()
 
     # --- Modo de entrada do PDF ---
@@ -384,7 +371,6 @@ def run_app():
     )
 
     pdf_bytes = None
-
     if modo == "Upload de arquivo":
         uploaded_file = st.file_uploader(
             f"Faça o upload do arquivo PDF do **Diário {diario_escolhido}**.",
@@ -392,20 +378,20 @@ def run_app():
         )
         if uploaded_file is not None:
             pdf_bytes = uploaded_file.read()
-
-    else:  # Link da internet
+    else:
+        # Link da internet
         url = st.text_input("Cole o link do PDF aqui:")
         if url:
             try:
                 with st.spinner("Baixando PDF..."):
                     resp = requests.get(url, timeout=30)
-                if resp.status_code == 200:
-                    ctype = resp.headers.get("Content-Type", "")
-                    if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
-                        st.warning("O link não parece apontar para um PDF (Content-Type != PDF). Tentarei processar mesmo assim.")
-                    pdf_bytes = resp.content
-                else:
-                    st.error(f"Falha ao baixar (status {resp.status_code}).")
+                    if resp.status_code == 200:
+                        ctype = resp.headers.get("Content-Type", "")
+                        if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
+                            st.warning("O link não parece apontar para um PDF (Content-Type != PDF). Tentarei processar mesmo assim.")
+                        pdf_bytes = resp.content
+                    else:
+                        st.error(f"Falha ao baixar (status {resp.status_code}).")
             except Exception as e:
                 st.error(f"Erro ao baixar o PDF: {e}")
 
@@ -420,7 +406,6 @@ def run_app():
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
-
                 # Normalização básica
                 text = re.sub(r"[ \t]+", " ", text)
                 text = re.sub(r"\n+", "\n", text)
@@ -429,31 +414,29 @@ def run_app():
                     processor = LegislativeProcessor(text)
                     extracted_data = processor.process_all()
 
-                # Gera Excel em memória
-                output = io.BytesIO()
-                excel_file_name = "Legislativo_Extraido.xlsx"
-                with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                    for sheet_name, df in extracted_data.items():
-                        df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
-                output.seek(0)
-                download_data = output
-                file_name = excel_file_name
-                mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    # Gera Excel em memória
+                    output = io.BytesIO()
+                    excel_file_name = "Legislativo_Extraido.xlsx"
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                        for sheet_name, df in extracted_data.items():
+                            df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+                    output.seek(0)
+                    download_data = output
+                    file_name = excel_file_name
+                    mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             elif diario_escolhido == 'Administrativo':
                 with st.spinner('Extraindo dados do Diário Administrativo...'):
                     processor = AdministrativeProcessor(pdf_bytes)
                     csv_data = processor.to_csv()
-
-                if csv_data:
-                    download_data = csv_data
-                    file_name = "Administrativo_Extraido.csv"
-                    mime_type = "text/csv"
-                else:
-                    download_data = None
-                    file_name = None
-                    mime_type = None
-
+                    if csv_data:
+                        download_data = csv_data
+                        file_name = "Administrativo_Extraido.csv"
+                        mime_type = "text/csv"
+                    else:
+                        download_data = None
+                        file_name = None
+                        mime_type = None
             else:
                 st.info("A funcionalidade para o Diário do Executivo ainda está em desenvolvimento.")
                 download_data = None
@@ -477,6 +460,3 @@ def run_app():
 # --- Entrada ---
 if __name__ == "__main__":
     run_app()
-
-
-
