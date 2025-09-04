@@ -131,19 +131,7 @@ class LegislativeProcessor:
             numero_ano = match.group(1).replace(".", "")
             reqs_to_ignore.add(numero_ano)
 
-        # 1) RQC recebidos/aprovados
-        rqc_recebido_pattern = re.compile(
-            r"É recebido pela presidência, para posterior apreciação, o Requerimento(?: nº)? (\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
-            re.IGNORECASE
-        )
-        for match in rqc_recebido_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
-            ano = match.group(2)
-            numero_ano = f"{num_part}/{ano}"
-            if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Recebido"])
-
-        # 2) RQC recebidos e aprovados
+        # 1) RQC recebidos e aprovados
         rqc_pattern_aprovado = re.compile(
             r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
@@ -154,6 +142,18 @@ class LegislativeProcessor:
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
+
+        # 2) RQC recebidos para apreciação (novo critério)
+        rqc_recebido_apreciacao_pattern = re.compile(
+            r"É recebido pela\s+presidência, para posterior apreciação, o Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in rqc_recebido_apreciacao_pattern.finditer(self.text):
+            num_part = match.group(1).replace('.', '')
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            if numero_ano not in reqs_to_ignore:
+                requerimentos.append(["RQC", num_part, ano, "", "", "Recebido para apreciação"])
 
         # 3) RQN e RQC (padrão antigo)
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
