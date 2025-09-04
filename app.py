@@ -119,7 +119,7 @@ class LegislativeProcessor:
             numero, ano = numero_ano.split("/")
             sigla = TIPO_MAP_PROP[tipo_extenso]
             categoria = "UP" if pattern_utilidade.search(subseq_text) else ""
-            proposicoes.append([sigla, numero, ano, categoria])
+            proposicoes.append([sigla, numero, ano, "", "", categoria])
 
         return pd.DataFrame(
             proposicoes,
@@ -477,5 +477,6 @@ def run_app():
 # --- Entrada ---
 if __name__ == "__main__":
     run_app()
+
 
 
