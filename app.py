@@ -147,7 +147,7 @@ class LegislativeProcessor:
         # 2) RQC recebidos e aprovados (Com correção para o caractere 'º')
         # A nova regex abaixo lida com o texto inicial e a formatação do número.
         rqc_pattern_aprovado = re.compile(
-            r"(?:\.\s*|.)?É recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            r"É recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
         )
         for match in rqc_pattern_aprovado.finditer(self.text):
@@ -447,6 +447,10 @@ def run_app():
                 # Normalização básica
                 text = re.sub(r"[ \t]+", " ", text)
                 text = re.sub(r"\n+", "\n", text)
+                
+                # Normalização adicional para casos de quebra de linha
+                # Essa é a mudança mais significativa
+                text = re.sub(r'\n(?!reuniao|sessao|ata|emendas|tramitacao|comissao)', ' ', text, flags=re.IGNORECASE)
 
                 with st.spinner('Extraindo dados do Diário do Legislativo...'):
                     processor = LegislativeProcessor(text)
