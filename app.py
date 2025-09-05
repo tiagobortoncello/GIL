@@ -1,6 +1,3 @@
-Perfeito! Aqui está o **código completo do seu app Streamlit**, com a correção da string no `st.warning` e mantendo a nova regra que você pediu para os requerimentos:
-
-```python
 # -*- coding: utf-8 -*-
 # ======================================
 # Extrator de Documentos Oficiais (Streamlit)
@@ -390,4 +387,3 @@ def run_app():
                         download_data = csv_data
                         file_name = "Administrativo_Extraido.csv"
                         mime_type = "text/csv"
-```
