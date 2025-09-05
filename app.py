@@ -21,28 +21,44 @@ class LegislativeProcessor:
     def __init__(self, text):
         self.text = text
 
-    def process_requerimentos(self):
+    def process_requerimentos(self) -> pd.DataFrame:
         requerimentos = []
-
-        # 1) Padrão geral de RQC
-        rqc_pattern = re.compile(
-            r"Requerimento(?: de Congratulação e Aplausos)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)\/\s*(\d{4})",
-            re.IGNORECASE
-        )
-
-        # 2) RQC que já aparecem como aprovados
-        rqc_pattern_aprovado = re.compile(
-            r"Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)\/\s*(\d{4}).*?(aprovado|aprovada)",
+        ignore_pattern = re.compile(
+            r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})",
             re.IGNORECASE | re.DOTALL
         )
-        reqs_to_ignore = set(
-            f"{m.group(1).replace('.', '')}/{m.group(2)}"
-            for m in rqc_pattern_aprovado.finditer(self.text)
-        )
+        reqs_to_ignore = set()
+        for match in ignore_pattern.finditer(self.text):
+            numero_ano = match.group(1).replace(".", "")
+            reqs_to_ignore.add(numero_ano)
 
-        # 2b) NOVO: RQC no formato "É recebido pela presidência..."
+        # 1) Requerimentos recebidos com padrão "RECEBIMENTO DE PROPOSIÇÃO" (já existente)
+        req_recebimento_pattern = re.compile(
+            r"RECEBIMENTO DE PROPOSIÇÃO[\s\S]*?REQUERIMENTO Nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in req_recebimento_pattern.finditer(self.text):
+            num_part = match.group(1).replace('.', '')
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            if numero_ano not in reqs_to_ignore:
+                requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
+
+        # 2) RQC recebidos e aprovados (já existente)
+        rqc_pattern_aprovado = re.compile(
+            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            re.IGNORECASE
+        )
+        for match in rqc_pattern_aprovado.finditer(self.text):
+            num_part = match.group(1).replace('.', '')
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            if numero_ano not in reqs_to_ignore:
+                requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
+
+        # 3b) NOVO: RQC recebidos no formato "É recebido pela presidência..."
         rqc_pattern_erecebido = re.compile(
-            r"É recebido pela\s+presidência.*?Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)\/\s*(\d{4})",
+            r"É recebido pela\s+presidência.*?Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
         for match in rqc_pattern_erecebido.finditer(self.text):
@@ -50,15 +66,7 @@ class LegislativeProcessor:
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Recebido e aprovado"])
-
-        # 3) Captura os RQC não aprovados explicitamente
-        for match in rqc_pattern.finditer(self.text):
-            num_part = match.group(1).replace(".", "")
-            ano = match.group(2)
-            numero_ano = f"{num_part}/{ano}"
-            if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Pendente"])
+                requerimentos.append(["RQC", num_part, ano, "", "", "Recebido"])
 
         return requerimentos
 
@@ -66,10 +74,10 @@ class LegislativeProcessor:
         proposicoes = []
 
         patterns = {
-            "PL": re.compile(r"Projeto de Lei nº\s*(\d{1,5})\/\s*(\d{4})", re.IGNORECASE),
-            "PLC": re.compile(r"Projeto de Lei Complementar nº\s*(\d{1,5})\/\s*(\d{4})", re.IGNORECASE),
-            "PLS": re.compile(r"Projeto de Lei Suplementar nº\s*(\d{1,5})\/\s*(\d{4})", re.IGNORECASE),
-            "PEC": re.compile(r"Proposta de Emenda à Constituição nº\s*(\d{1,5})\/\s*(\d{4})", re.IGNORECASE),
+            "PL": re.compile(r"Projeto de Lei nº\s*(\d{1,5})/(\d{4})", re.IGNORECASE),
+            "PLC": re.compile(r"Projeto de Lei Complementar nº\s*(\d{1,5})/(\d{4})", re.IGNORECASE),
+            "PLS": re.compile(r"Projeto de Lei Suplementar nº\s*(\d{1,5})/(\d{4})", re.IGNORECASE),
+            "PEC": re.compile(r"Proposta de Emenda à Constituição nº\s*(\d{1,5})/(\d{4})", re.IGNORECASE),
         }
 
         for tipo, pattern in patterns.items():
