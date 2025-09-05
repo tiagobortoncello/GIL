@@ -24,26 +24,26 @@ class LegislativeProcessor:
     def process_requerimentos(self):
         requerimentos = []
 
-        # --- Padrão Geral RQC ---
+        # 1) Padrão geral de RQC
         rqc_pattern = re.compile(
             r"Requerimento(?: de Congratulação e Aplausos)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)\/\s*(\d{4})",
-            re.IGNORECASE,
+            re.IGNORECASE
         )
 
-        # --- Ignorar os que já foram aprovados diretamente ---
+        # 2) RQC que já aparecem como aprovados
         rqc_pattern_aprovado = re.compile(
             r"Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)\/\s*(\d{4}).*?(aprovado|aprovada)",
-            re.IGNORECASE | re.DOTALL,
+            re.IGNORECASE | re.DOTALL
         )
         reqs_to_ignore = set(
             f"{m.group(1).replace('.', '')}/{m.group(2)}"
             for m in rqc_pattern_aprovado.finditer(self.text)
         )
 
-        # --- NOVO: Padrão "É recebido pela presidência..." ---
+        # 2b) NOVO: RQC no formato "É recebido pela presidência..."
         rqc_pattern_erecebido = re.compile(
             r"É recebido pela\s+presidência.*?Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)\/\s*(\d{4})",
-            re.IGNORECASE | re.DOTALL,
+            re.IGNORECASE | re.DOTALL
         )
         for match in rqc_pattern_erecebido.finditer(self.text):
             num_part = match.group(1).replace('.', '')
@@ -52,7 +52,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Recebido e aprovado"])
 
-        # --- Captura os RQC não aprovados explicitamente ---
+        # 3) Captura os RQC não aprovados explicitamente
         for match in rqc_pattern.finditer(self.text):
             num_part = match.group(1).replace(".", "")
             ano = match.group(2)
@@ -61,10 +61,6 @@ class LegislativeProcessor:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Pendente"])
 
         return requerimentos
-
-    # ======================
-    # Outras funções iguais
-    # ======================
 
     def process_proposicoes(self):
         proposicoes = []
