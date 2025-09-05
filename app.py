@@ -144,12 +144,12 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
 
-        # 2) RQC recebidos e aprovados
-        rqc_pattern_aprovado = re.compile(
-            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
-            re.IGNORECASE
+        # 2) RQC's com "É recebido" (nova regra)
+        rqc_recebido_padrao = re.compile(
+            r"É recebido(?:.+), submetido a votação e aprovado o Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            re.IGNORECASE | re.DOTALL
         )
-        for match in rqc_pattern_aprovado.finditer(self.text):
+        for match in rqc_recebido_padrao.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
@@ -493,7 +493,3 @@ def run_app():
 
         except Exception as e:
             st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
-
-# --- Entrada ---
-if __name__ == "__main__":
-    run_app()
