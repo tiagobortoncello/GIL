@@ -147,7 +147,7 @@ class LegislativeProcessor:
         # 2) RQC recebidos e aprovados (Com correção para o caractere 'º')
         # A nova regex abaixo lida com o texto inicial e a formatação do número.
         rqc_pattern_aprovado = re.compile(
-            r"(?:\.\s*)?É recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            r"É\s+recebido\s+pela\s+presidência,\s+submetido\s+a\s+votação\s+e\s+aprovado\s+o\s+Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
         )
         for match in rqc_pattern_aprovado.finditer(self.text):
