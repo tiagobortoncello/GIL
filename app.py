@@ -387,3 +387,25 @@ def run_app():
                         download_data = csv_data
                         file_name = "Administrativo_Extraido.csv"
                         mime_type = "text/csv"
+                    else:
+                        download_data = None
+
+            else:
+                st.warning("Opção ainda não disponível.")
+                download_data = None
+
+            # --- Download ---
+            if download_data:
+                st.download_button(
+                    label=f"Baixar arquivo extraído ({file_name})",
+                    data=download_data,
+                    file_name=file_name,
+                    mime=mime_type
+                )
+
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao processar o PDF: {e}")
+
+# --- Run App ---
+if __name__ == "__main__":
+    run_app()
