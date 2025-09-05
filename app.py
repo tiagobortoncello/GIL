@@ -144,9 +144,9 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
 
-        # 2) RQC recebidos e aprovados
+        # 2) RQC recebidos e aprovados (Com correção para o caractere 'º')
         rqc_pattern_aprovado = re.compile(
-            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            r"recebido pela presidência, submetido a votação e aprovado o Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
         )
         for match in rqc_pattern_aprovado.finditer(self.text):
