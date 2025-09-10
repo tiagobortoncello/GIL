@@ -13,6 +13,7 @@ import io
 import csv
 import fitz # PyMuPDF
 import requests
+import pdfplumber
 
 # --- Constantes e Mapeamentos ---
 TIPO_MAP_NORMA = {
@@ -44,6 +45,13 @@ SIGLA_MAP_PARECER = {
     "projeto de lei complementar": "PLC",
     "plc": "PLC",
     "emendas ao projeto de lei": "EMENDA"
+}
+
+# Dicionário para converter meses em português para número
+meses = {
+    "JANEIRO": "01", "FEVEREIRO": "02", "MARÇO": "03", "MARCO": "03",
+    "ABRIL": "04", "MAIO": "05", "JUNHO": "06", "JULHO": "07",
+    "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
 }
 
 # --- Funções Utilitárias ---
@@ -373,6 +381,173 @@ class AdministrativeProcessor:
         writer.writerows(resultados)
         return output_csv.getvalue().encode('utf-8')
 
+class ExecutiveProcessor:
+    """Processa o texto de um Diário do Executivo, extraindo normas e alterações."""
+    def __init__(self, pdf_bytes: bytes):
+        self.pdf_bytes = pdf_bytes
+
+    def process_pdf(self) -> pd.DataFrame:
+        trechos = []
+        try:
+            with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
+                for i, pagina in enumerate(pdf.pages, start=1):
+                    largura, altura = pagina.width, pagina.height
+                    for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
+                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                        texto_limpo = re.sub(r'\s+', ' ', coluna).strip()
+                        trechos.append({
+                            "pagina": i,
+                            "coluna": col_num,
+                            "texto": texto_limpo
+                        })
+        except Exception as e:
+            st.error(f"Erro ao extrair texto do PDF do Executivo: {e}")
+            return pd.DataFrame()
+
+        start_idx = next((idx for idx, t in enumerate(trechos) if re.search(r'Leis\s*e\s*Decretos', t["texto"], re.IGNORECASE)), None)
+        end_idx = next((idx for idx, t in reversed(list(enumerate(trechos))) if re.search(r'Atos\s*do\s*Governador', t["texto"], re.IGNORECASE)), None)
+
+        if start_idx is None or end_idx is None or start_idx > end_idx:
+            st.warning("Não foi encontrado o trecho de 'Leis e Decretos'.")
+            return pd.DataFrame()
+
+        norma_regex = re.compile(
+            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
+        )
+        comandos_regex = re.compile(
+            r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
+            re.IGNORECASE
+        )
+        norma_alterada_regex = re.compile(
+            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
+            re.IGNORECASE
+        )
+        mapa_tipos = {
+            "LEI": "LEI",
+            "LEI COMPLEMENTAR": "LCP",
+            "DECRETO": "DEC",
+            "DECRETO NE": "DNE"
+        }
+
+        dados = []
+        for t in trechos[start_idx:end_idx+1]:
+            pagina = t["pagina"]
+            coluna = t["coluna"]
+            texto = t["texto"]
+
+            eventos = []
+            for m in norma_regex.finditer(texto):
+                eventos.append(('published', m.start(), m))
+            for c in comandos_regex.finditer(texto):
+                eventos.append(('command', c.start(), c))
+            eventos.sort(key=lambda e: e[1])
+
+            ultima_norma = None
+            seen_alteracoes = set()
+
+            for ev in eventos:
+                tipo_ev, pos_ev, match_obj = ev
+                command_text = match_obj.group(0).lower()
+
+                if tipo_ev == 'published':
+                    match = match_obj
+                    tipo_raw = match.group(1).strip()
+                    tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
+                    numero = match.group(2).replace(" ", "").replace(".", "")
+                    data_texto = match.group(3).strip()
+
+                    try:
+                        partes = data_texto.split(" DE ")
+                        dia = partes[0].zfill(2)
+                        mes = meses[partes[1]]
+                        ano = partes[2]
+                        sancao = f"{dia}/{mes}/{ano}"
+                    except:
+                        sancao = ""
+
+                    linha = {
+                        "Página": pagina,
+                        "Coluna": coluna,
+                        "Sanção": sancao,
+                        "Tipo": tipo,
+                        "Número": numero,
+                        "Alterações": ""
+                    }
+                    dados.append(linha)
+                    ultima_norma = linha
+                    seen_alteracoes = set()
+
+                elif tipo_ev == 'command':
+                    if ultima_norma is None:
+                        continue
+
+                    raio = 150
+                    start_block = max(0, pos_ev - raio)
+                    end_block = min(len(texto), pos_ev + raio)
+                    bloco = texto[start_block:end_block]
+
+                    if 'revogado' in command_text:
+                        alteracoes_para_processar = list(norma_alterada_regex.finditer(bloco))
+                    else:
+                        alteracoes_candidatas = list(norma_alterada_regex.finditer(bloco))
+                        if not alteracoes_candidatas:
+                            continue
+                        
+                        pos_comando_no_bloco = pos_ev - start_block
+                        melhor_candidato = min(
+                            alteracoes_candidatas,
+                            key=lambda m: abs(m.start() - pos_comando_no_bloco)
+                        )
+                        alteracoes_para_processar = [melhor_candidato]
+
+                    if not alteracoes_para_processar:
+                        continue
+
+                    for alt in alteracoes_para_processar:
+                        tipo_alt_raw = alt.group(1).strip()
+                        tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+                        num_alt = alt.group(2).replace(" ", "").replace(".", "").replace("/", "")
+
+                        data_texto_alt = alt.group(3)
+                        ano_alt = ""
+                        if data_texto_alt:
+                            ano_match = re.search(r'(\d{4})', data_texto_alt)
+                            if ano_match:
+                                ano_alt = ano_match.group(1)
+                        
+                        chave_alt = f"{tipo_alt} {num_alt}"
+                        if ano_alt:
+                            chave_alt += f" {ano_alt}"
+
+                        if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
+                            continue
+
+                        if chave_alt in seen_alteracoes:
+                            continue
+                        seen_alteracoes.add(chave_alt)
+
+                        if ultima_norma["Alterações"] == "":
+                            ultima_norma["Alterações"] = chave_alt
+                        else:
+                            dados.append({
+                                "Página": "",
+                                "Coluna": "",
+                                "Sanção": "",
+                                "Tipo": "",
+                                "Número": "",
+                                "Alterações": chave_alt
+                            })
+        
+        return pd.DataFrame(dados) if dados else pd.DataFrame()
+
+    def to_csv(self):
+        df = self.process_pdf()
+        if df.empty:
+            return None
+        output_csv = io.StringIO()
+        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
+        return output_csv.getvalue().encode('utf-8')
+
 # --- Função Principal da Aplicação Streamlit ---
 def run_app():
     st.markdown("""
@@ -408,17 +583,19 @@ def run_app():
     st.divider()
     diario_escolhido = st.radio(
         "Selecione o tipo de Diário para extração:",
-        ('Legislativo', 'Administrativo', 'Executivo (Em breve)'),
+        ('Legislativo', 'Administrativo', 'Executivo'),
         horizontal=True
     )
     st.divider()
 
     # --- Modo de entrada do PDF ---
-    modo = st.radio(
-        "Como deseja fornecer o PDF?",
-        ("Upload de arquivo", "Link da internet"),
-        horizontal=True
-    )
+    modo = "Upload de arquivo"
+    if diario_escolhido != 'Executivo':
+        modo = st.radio(
+            "Como deseja fornecer o PDF?",
+            ("Upload de arquivo", "Link da internet"),
+            horizontal=True
+        )
 
     pdf_bytes = None
     if modo == "Upload de arquivo":
@@ -487,11 +664,18 @@ def run_app():
                         download_data = None
                         file_name = None
                         mime_type = None
-            else:
-                st.info("A funcionalidade para o Diário do Executivo ainda está em desenvolvimento.")
-                download_data = None
-                file_name = None
-                mime_type = None
+            else: # Executivo
+                with st.spinner('Extraindo dados do Diário do Executivo...'):
+                    processor = ExecutiveProcessor(pdf_bytes)
+                    csv_data = processor.to_csv()
+                    if csv_data:
+                        download_data = csv_data
+                        file_name = "Executivo_Extraido.csv"
+                        mime_type = "text/csv"
+                    else:
+                        download_data = None
+                        file_name = None
+                        mime_type = None
 
             if download_data:
                 st.success("Dados extraídos com sucesso! ✅")
