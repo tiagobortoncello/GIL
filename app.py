@@ -241,6 +241,7 @@ class LegislativeProcessor:
             r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
             re.IGNORECASE
         )
+        
         pareceres_start = pareceres_start_pattern.search(self.text)
         if not pareceres_start:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
@@ -250,6 +251,20 @@ class LegislativeProcessor:
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
+
+        # Novo: Identifica emendas que foram rejeitadas
+        emendas_rejeitadas = set()
+        emenda_rejeicao_pattern = re.compile(
+            r"rejeiç(?:ão|ar) da Emenda Nº (\d+)\s+ao\s+Projeto de Lei Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in emenda_rejeicao_pattern.finditer(clean_text):
+            num_emenda = match.group(1)
+            num_projeto = match.group(2).replace('.', '')
+            ano_projeto = match.group(3)
+            # A chave da emenda rejeitada será (sigla do projeto, número do projeto, ano do projeto, número da emenda)
+            # Isso é para evitar falsos positivos
+            emendas_rejeitadas.add(('PL', num_projeto, ano_projeto, num_emenda))
 
         # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
         emenda_projeto_lei_pattern = re.compile(
@@ -276,10 +291,17 @@ class LegislativeProcessor:
         )
 
         for match in emenda_completa_pattern.finditer(clean_text):
-            numero = match.group(2).replace(".", "")
-            ano = match.group(3)
+            numero_emenda = match.group(1)
+            numero_projeto = match.group(2).replace(".", "")
+            ano_projeto = match.group(3)
             sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
-            project_key = (sigla, numero, ano)
+            
+            # Novo: Ignora se a emenda for rejeitada
+            emenda_key_rejeicao = (sigla, numero_projeto, ano_projeto, numero_emenda)
+            if emenda_key_rejeicao in emendas_rejeitadas:
+                continue
+
+            project_key = (sigla, numero_projeto, ano_projeto)
             if project_key not in found_projects:
                 found_projects[project_key] = set()
             found_projects[project_key].add("EMENDA")
@@ -302,6 +324,14 @@ class LegislativeProcessor:
                 ano = last_project_match.group(4)
                 project_key = (sigla, numero, ano)
                 item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
+
+                # Novo: Ignora se for emenda rejeitada
+                if item_type == "EMENDA":
+                    num_emenda = title_match.group(1)
+                    emenda_key_rejeicao = (sigla, numero, ano, num_emenda)
+                    if emenda_key_rejeicao in emendas_rejeitadas:
+                        continue
+                
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
@@ -514,7 +544,7 @@ class ExecutiveProcessor:
                             ano_match = re.search(r'(\d{4})', data_texto_alt)
                             if ano_match:
                                 ano_alt = ano_match.group(1)
-                        
+                            
                         chave_alt = f"{tipo_alt} {num_alt}"
                         if ano_alt:
                             chave_alt += f" {ano_alt}"
@@ -537,7 +567,7 @@ class ExecutiveProcessor:
                                 "Número": "",
                                 "Alterações": chave_alt
                             })
-        
+            
         return pd.DataFrame(dados) if dados else pd.DataFrame()
 
     def to_csv(self):
@@ -677,20 +707,19 @@ def run_app():
                         file_name = None
                         mime_type = None
 
-            if download_data:
-                st.success("Dados extraídos com sucesso! ✅")
-                st.divider()
+            if download_data and file_name and mime_type:
+                st.success("Extração concluída com sucesso!")
                 st.download_button(
-                    label="Clique aqui para baixar o arquivo",
+                    label=f"Baixar arquivo",
                     data=download_data,
                     file_name=file_name,
                     mime=mime_type
                 )
-                st.info(f"O download do arquivo **{file_name}** está pronto.")
+            else:
+                st.warning("Não foi possível extrair dados do documento fornecido.")
 
         except Exception as e:
-            st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
+            st.error(f"Ocorreu um erro no processamento do arquivo: {e}")
 
-# --- Entrada ---
 if __name__ == "__main__":
     run_app()
