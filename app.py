@@ -303,10 +303,6 @@ class LegislativeProcessor:
                 numero = last_project_match.group(3).replace(".", "")
                 ano = last_project_match.group(4)
                 
-                # Previne a associação incorreta de Requerimentos com pareceres
-                if sigla == "RQN":
-                    continue
-                
                 project_key = (sigla, numero, ano)
                 item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
                 if project_key not in found_projects:
