@@ -236,9 +236,13 @@ class LegislativeProcessor:
 
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
-        pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
+        # O padrão para "TRAMITAÇÃO DE PROPOSIÇÕES" pode variar. Adicionei variações comuns.
+        pareceres_start_pattern = re.compile(
+            r"TRAMITAÇÃO\s+DE\s+PROPOSIÇ(ÕES|AO)",
+            re.IGNORECASE
+        )
         pareceres_end_pattern = re.compile(
-            r"^\s*(?:Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
+            r"^\s*(?:Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|EXPEDIENTE|$)",
             re.MULTILINE
         )
 
@@ -250,15 +254,16 @@ class LegislativeProcessor:
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
         )
+        
+        # Padrão para encontrar o projeto de referência, mais robusto.
         project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
+            r"(PROJETO DE LEI|PL|PROJETO DE RESOLUÇÃO|PRE|PROPOSTA DE EMENDA À CONSTITUIÇÃO|PEC|PROJETO DE LEI COMPLEMENTAR|PLC|REQUERIMENTO|RQN)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
         
-        # Expressão regular para encontrar emendas e substitutivos.
-        # Captura o título e o número.
+        # Padrão para encontrar substitutivo ou emenda
         sub_emenda_pattern = re.compile(
-            r"^(?:\s*)(SUBSTITUTIVO|EMENDA)\s+Nº\s+(\d+)\s*", 
+            r"(SUBSTITUTIVO|EMENDA)\s+Nº\s+(\d+)\s*", 
             re.MULTILINE | re.IGNORECASE
         )
 
@@ -271,48 +276,40 @@ class LegislativeProcessor:
         end_idx = end_match.start() if end_match else len(self.text)
         pareceres_text = self.text[start_idx:end_idx]
 
-        # Processar o texto para encontrar pareceres associados a projetos
-        for match in emenda_completa_pattern.finditer(pareceres_text):
-            numero = match.group(2).replace(".", "")
-            ano = match.group(3)
-            sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
-            project_key = (sigla, numero, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
+        # Dividir o texto em blocos de proposições
+        blocks = re.split(r'\n(?=\s*(?:' + '|'.join(SIGLA_MAP_PARECER.keys()) + '))', pareceres_text, flags=re.IGNORECASE)
+        
+        if len(blocks) == 1 and not re.search(r"projeto de lei", blocks[0], re.IGNORECASE):
+            # Se não encontrar nada, o split pode não ter funcionado bem. Tratar o texto como um todo.
+            blocks = [pareceres_text]
 
-        for match in emenda_projeto_lei_pattern.finditer(pareceres_text):
-            numero_raw = match.group(1).replace('.', '')
-            ano = match.group(2)
-            project_key = ("PL", numero_raw, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
-        
-        # Encontrar todas as correspondências de 'SUBSTITUTIVO' e 'EMENDA'
-        all_sub_emenda_matches = sorted(
-            list(sub_emenda_pattern.finditer(pareceres_text)),
-            key=lambda x: x.start()
-        )
-        
-        for sub_emenda_match in all_sub_emenda_matches:
-            # Encontrar o projeto mais próximo antes do substitutivo/emenda
-            text_before_match = pareceres_text[:sub_emenda_match.start()]
-            last_project_match = None
-            for match in project_pattern.finditer(text_before_match):
-                last_project_match = match
+        for block in blocks:
+            # Encontrar o projeto de referência no bloco
+            project_match = project_pattern.search(block)
+            if not project_match:
+                continue
+
+            sigla_raw = project_match.group(1)
+            sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
+            numero = project_match.group(2).replace(".", "")
+            ano = project_match.group(3)
+            project_key = (sigla, numero, ano)
+
+            types = set()
             
-            if last_project_match:
-                sigla_raw = last_project_match.group(2)
-                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                numero = last_project_match.group(3).replace(".", "")
-                ano = last_project_match.group(4)
-                project_key = (sigla, numero, ano)
+            # Procurar por substitutivos ou emendas dentro do mesmo bloco
+            for sub_emenda_match in sub_emenda_pattern.finditer(block):
                 item_type = sub_emenda_match.group(1).upper()
-                
+                types.add(item_type)
+            
+            # Procurar por padrões específicos como "EMENDAS AO PROJETO DE LEI"
+            if emenda_projeto_lei_pattern.search(block):
+                types.add("EMENDA")
+
+            if types:
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
-                found_projects[project_key].add(item_type)
+                found_projects[project_key].update(types)
 
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
