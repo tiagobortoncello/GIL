@@ -235,86 +235,51 @@ class LegislativeProcessor:
         return pd.DataFrame(unique_reqs)
 
     def process_pareceres(self) -> pd.DataFrame:
-        found_projects = {}
-        # O padrão para "TRAMITAÇÃO DE PROPOSIÇÕES" pode variar. Adicionei variações comuns.
-        pareceres_start_pattern = re.compile(
-            r"TRAMITAÇÃO\s+DE\s+PROPOSIÇ(ÕES|AO)",
-            re.IGNORECASE
-        )
-        pareceres_end_pattern = re.compile(
-            r"^\s*(?:Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|EXPEDIENTE|$)",
-            re.MULTILINE
-        )
-
-        emenda_projeto_lei_pattern = re.compile(
-            r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
-            re.IGNORECASE | re.DOTALL
-        )
-        emenda_completa_pattern = re.compile(
-            r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
-            re.IGNORECASE
-        )
-        
-        # Padrão para encontrar o projeto de referência, mais robusto.
-        project_pattern = re.compile(
-            r"(PROJETO DE LEI|PL|PROJETO DE RESOLUÇÃO|PRE|PROPOSTA DE EMENDA À CONSTITUIÇÃO|PEC|PROJETO DE LEI COMPLEMENTAR|PLC|REQUERIMENTO|RQN)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
-            re.IGNORECASE | re.DOTALL
-        )
-        
-        # Padrão para encontrar substitutivo ou emenda
-        sub_emenda_pattern = re.compile(
-            r"(SUBSTITUTIVO|EMENDA)\s+Nº\s+(\d+)\s*", 
-            re.MULTILINE | re.IGNORECASE
-        )
-
-        pareceres_start = pareceres_start_pattern.search(self.text)
-        if not pareceres_start:
-            return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
-
-        start_idx = pareceres_start.end()
-        end_match = pareceres_end_pattern.search(self.text, start_idx)
-        end_idx = end_match.start() if end_match else len(self.text)
-        pareceres_text = self.text[start_idx:end_idx]
-
-        # Dividir o texto em blocos de proposições
-        blocks = re.split(r'\n(?=\s*(?:' + '|'.join(SIGLA_MAP_PARECER.keys()) + '))', pareceres_text, flags=re.IGNORECASE)
-        
-        if len(blocks) == 1 and not re.search(r"projeto de lei", blocks[0], re.IGNORECASE):
-            # Se não encontrar nada, o split pode não ter funcionado bem. Tratar o texto como um todo.
-            blocks = [pareceres_text]
-
-        for block in blocks:
-            # Encontrar o projeto de referência no bloco
-            project_match = project_pattern.search(block)
-            if not project_match:
-                continue
-
-            sigla_raw = project_match.group(1)
-            sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-            numero = project_match.group(2).replace(".", "")
-            ano = project_match.group(3)
-            project_key = (sigla, numero, ano)
-
-            types = set()
-            
-            # Procurar por substitutivos ou emendas dentro do mesmo bloco
-            for sub_emenda_match in sub_emenda_pattern.finditer(block):
-                item_type = sub_emenda_match.group(1).upper()
-                types.add(item_type)
-            
-            # Procurar por padrões específicos como "EMENDAS AO PROJETO DE LEI"
-            if emenda_projeto_lei_pattern.search(block):
-                types.add("EMENDA")
-
-            if types:
-                if project_key not in found_projects:
-                    found_projects[project_key] = set()
-                found_projects[project_key].update(types)
-
+        """Extrai dados de pareceres e afins do texto, buscando por padrões no texto completo."""
         pareceres = []
-        for (sigla, numero, ano), types in found_projects.items():
-            type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
-            pareceres.append([sigla, numero, ano, type_str])
+        seen_items = set()
+
+        # Padrão para encontrar substitutivos ou emendas
+        # Inclui um contexto maior para garantir que o parecer esteja associado a um projeto
+        main_pattern = re.compile(
+            r"((?:SUBSTITUTIVO|EMENDA)\s+Nº\s+\d+\s+AO\s+(?:SUBSTITUTIVO\s+Nº\s+\d+\s+AO\s+)?(PROJETO DE LEI|PL|PROJETO DE LEI COMPLEMENTAR|PLC|INDICAÇÃO|IND|PROJETO DE RESOLUÇÃO|PRE|PROPOSTA DE EMENDA À CONSTITUIÇÃO|PEC|MENSAGEM|MSG|VETO|VET)\s+Nº\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4}))",
+            re.IGNORECASE | re.DOTALL
+        )
+        
+        # Padrão secundário para casos mais simples
+        secondary_pattern = re.compile(
+            r"(?:EMENDAS|SUBSTITUTIVO)\s+AO\s+(PROJETO DE LEI|PROJETO DE LEI COMPLEMENTAR)\s+Nº\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+
+        # Buscar por ambos os padrões no texto
+        for match in main_pattern.finditer(self.text):
+            item_full_text = match.group(1).strip()
+            tipo_prop_raw = match.group(2)
+            numero_prop_raw = match.group(3).replace(".", "")
+            ano_prop = match.group(4)
+
+            tipo_parecer = "SUBSTITUTIVO" if "SUBSTITUTIVO" in item_full_text.upper() else "EMENDA"
+            tipo_proposicao = TIPO_MAP_PROP.get(tipo_prop_raw.upper(), tipo_prop_raw.upper())
+            
+            item_key = (tipo_proposicao, numero_prop_raw, ano_prop, tipo_parecer)
+            
+            if item_key not in seen_items:
+                pareceres.append([tipo_proposicao, numero_prop_raw, ano_prop, tipo_parecer])
+                seen_items.add(item_key)
+
+        for match in secondary_pattern.finditer(self.text):
+            tipo_parecer = "SUB/EMENDA"
+            tipo_prop_raw = match.group(1)
+            numero_prop_raw = match.group(2).replace(".", "")
+            ano_prop = match.group(3)
+
+            tipo_proposicao = TIPO_MAP_PROP.get(tipo_prop_raw.upper(), tipo_prop_raw.upper())
+
+            item_key = (tipo_proposicao, numero_prop_raw, ano_prop, tipo_parecer)
+            if item_key not in seen_items:
+                pareceres.append([tipo_proposicao, numero_prop_raw, ano_prop, tipo_parecer])
+                seen_items.add(item_key)
 
         return pd.DataFrame(pareceres, columns=['Sigla', 'Número', 'Ano', 'Tipo'])
 
