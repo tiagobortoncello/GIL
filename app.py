@@ -237,45 +237,42 @@ class LegislativeProcessor:
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
-        votacao_pattern = re.compile(
-            r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
-            re.IGNORECASE
+        pareceres_end_pattern = re.compile(
+            r"^\s*(?:Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
+            re.MULTILINE
         )
-        pareceres_start = pareceres_start_pattern.search(self.text)
-        if not pareceres_start:
-            return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
 
-        pareceres_text = self.text[pareceres_start.end():]
-        # remove blocos de votação
-        clean_text = pareceres_text
-        for match in votacao_pattern.finditer(pareceres_text):
-            clean_text = clean_text.replace(match.group(0), "")
-
-        # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
         emenda_projeto_lei_pattern = re.compile(
             r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
-        for match in emenda_projeto_lei_pattern.finditer(clean_text):
-            numero_raw = match.group(1).replace('.', '')
-            ano = match.group(2)
-            project_key = ("PL", numero_raw, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
-
         emenda_completa_pattern = re.compile(
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
         )
-        emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
-        substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
         project_pattern = re.compile(
             r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
             re.IGNORECASE | re.DOTALL
         )
+        
+        # Expressão regular para encontrar emendas e substitutivos.
+        # Captura o título e o número.
+        sub_emenda_pattern = re.compile(
+            r"^(?:\s*)(SUBSTITUTIVO|EMENDA)\s+Nº\s+(\d+)\s*", 
+            re.MULTILINE | re.IGNORECASE
+        )
 
-        for match in emenda_completa_pattern.finditer(clean_text):
+        pareceres_start = pareceres_start_pattern.search(self.text)
+        if not pareceres_start:
+            return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
+
+        start_idx = pareceres_start.end()
+        end_match = pareceres_end_pattern.search(self.text, start_idx)
+        end_idx = end_match.start() if end_match else len(self.text)
+        pareceres_text = self.text[start_idx:end_idx]
+
+        # Processar o texto para encontrar pareceres associados a projetos
+        for match in emenda_completa_pattern.finditer(pareceres_text):
             numero = match.group(2).replace(".", "")
             ano = match.group(3)
             sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
@@ -284,44 +281,45 @@ class LegislativeProcessor:
                 found_projects[project_key] = set()
             found_projects[project_key].add("EMENDA")
 
-        all_matches = sorted(
-            list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
-            key=lambda x: x.start()
-        )
-
-        for title_match in all_matches:
-            text_before_title = clean_text[:title_match.start()]
-            last_project_match = None
-            for match in project_pattern.finditer(text_before_title):
-                last_project_match = match
-
-            if last_project_match:
-                sigla_raw = last_project_match.group(2)
-                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                numero = last_project_match.group(3).replace(".", "")
-                ano = last_project_match.group(4)
-                project_key = (sigla, numero, ano)
-                item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
-                if project_key not in found_projects:
-                    found_projects[project_key] = set()
-                found_projects[project_key].add(item_type)
-                
-        # Adiciona a nova regra
-        emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
-        for match in emenda_projeto_lei_pattern.finditer(clean_text):
+        for match in emenda_projeto_lei_pattern.finditer(pareceres_text):
             numero_raw = match.group(1).replace('.', '')
             ano = match.group(2)
             project_key = ("PL", numero_raw, ano)
             if project_key not in found_projects:
                 found_projects[project_key] = set()
             found_projects[project_key].add("EMENDA")
+        
+        # Encontrar todas as correspondências de 'SUBSTITUTIVO' e 'EMENDA'
+        all_sub_emenda_matches = sorted(
+            list(sub_emenda_pattern.finditer(pareceres_text)),
+            key=lambda x: x.start()
+        )
+        
+        for sub_emenda_match in all_sub_emenda_matches:
+            # Encontrar o projeto mais próximo antes do substitutivo/emenda
+            text_before_match = pareceres_text[:sub_emenda_match.start()]
+            last_project_match = None
+            for match in project_pattern.finditer(text_before_match):
+                last_project_match = match
+            
+            if last_project_match:
+                sigla_raw = last_project_match.group(2)
+                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
+                numero = last_project_match.group(3).replace(".", "")
+                ano = last_project_match.group(4)
+                project_key = (sigla, numero, ano)
+                item_type = sub_emenda_match.group(1).upper()
+                
+                if project_key not in found_projects:
+                    found_projects[project_key] = set()
+                found_projects[project_key].add(item_type)
 
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
             pareceres.append([sigla, numero, ano, type_str])
 
-        return pd.DataFrame(pareceres)
+        return pd.DataFrame(pareceres, columns=['Sigla', 'Número', 'Ano', 'Tipo'])
 
     def process_all(self) -> dict:
         df_normas = self.process_normas()
