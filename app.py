@@ -252,19 +252,19 @@ class LegislativeProcessor:
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
 
-        # Novo: Identifica emendas que foram rejeitadas
-        emendas_rejeitadas = set()
-        emenda_rejeicao_pattern = re.compile(
-            r"rejeiç(?:ão|ar) da Emenda Nº (\d+)\s+ao\s+Projeto de Lei Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
+        # Novo: Identifica blocos de rejeição para ignorá-los
+        emendas_rejeitadas_regex = re.compile(
+            r"PARECER(?:\s+SOBRE)?\s+A\s+EMENDA\s+Nº\s+(\d+)\s+AO\s+PROJETO\s+DE\s+LEI\s+Nº\s+(\d{1,4}\.?\d{0,3})/(\d{4})\s+Comissão[\s\S]*?Conclusão[\s\S]*?Pelo\s+exposto,\s+opinamos\s+pela\s+rejeiç(?:ão|ar)",
             re.IGNORECASE | re.DOTALL
         )
-        for match in emenda_rejeicao_pattern.finditer(clean_text):
-            num_emenda = match.group(1)
-            num_projeto = match.group(2).replace('.', '')
-            ano_projeto = match.group(3)
-            # A chave da emenda rejeitada será (sigla do projeto, número do projeto, ano do projeto, número da emenda)
-            # Isso é para evitar falsos positivos
-            emendas_rejeitadas.add(('PL', num_projeto, ano_projeto, num_emenda))
+        parecer_rejeicao_pattern = re.compile(
+            r"PARECER(?:.*\s+)?PELA\s+REJEIÇÃO\s+DA\s+EMENDA\s+Nº\s+(\d+)\s+AO\s+PROJETO\s+DE\s+LEI\s+Nº\s+(\d{1,4}\.?\d{0,3})/(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        
+        rejected_sections_to_skip = []
+        for match in parecer_rejeicao_pattern.finditer(self.text):
+            rejected_sections_to_skip.append((match.start(), match.end()))
 
         # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
         emenda_projeto_lei_pattern = re.compile(
@@ -275,6 +275,16 @@ class LegislativeProcessor:
             numero_raw = match.group(1).replace('.', '')
             ano = match.group(2)
             project_key = ("PL", numero_raw, ano)
+            
+            # Verifica se o match está em uma seção de rejeição
+            is_rejected = False
+            for start, end in rejected_sections_to_skip:
+                if start <= match.start() < end:
+                    is_rejected = True
+                    break
+            if is_rejected:
+                continue
+
             if project_key not in found_projects:
                 found_projects[project_key] = set()
             found_projects[project_key].add("EMENDA")
@@ -290,28 +300,21 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
 
-        for match in emenda_completa_pattern.finditer(clean_text):
-            numero_emenda = match.group(1)
-            numero_projeto = match.group(2).replace(".", "")
-            ano_projeto = match.group(3)
-            sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
-            
-            # Novo: Ignora se a emenda for rejeitada
-            emenda_key_rejeicao = (sigla, numero_projeto, ano_projeto, numero_emenda)
-            if emenda_key_rejeicao in emendas_rejeitadas:
-                continue
-
-            project_key = (sigla, numero_projeto, ano_projeto)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
-
         all_matches = sorted(
-            list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
+            list(emenda_completa_pattern.finditer(clean_text)) + list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
             key=lambda x: x.start()
         )
-
+        
         for title_match in all_matches:
+            # Verifica se o match está em uma seção de rejeição
+            is_rejected = False
+            for start, end in rejected_sections_to_skip:
+                if start <= title_match.start() < end:
+                    is_rejected = True
+                    break
+            if is_rejected:
+                continue
+                
             text_before_title = clean_text[:title_match.start()]
             last_project_match = None
             for match in project_pattern.finditer(text_before_title):
@@ -324,28 +327,11 @@ class LegislativeProcessor:
                 ano = last_project_match.group(4)
                 project_key = (sigla, numero, ano)
                 item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
-
-                # Novo: Ignora se for emenda rejeitada
-                if item_type == "EMENDA":
-                    num_emenda = title_match.group(1)
-                    emenda_key_rejeicao = (sigla, numero, ano, num_emenda)
-                    if emenda_key_rejeicao in emendas_rejeitadas:
-                        continue
                 
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
-                
-        # Adiciona a nova regra
-        emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
-        for match in emenda_projeto_lei_pattern.finditer(clean_text):
-            numero_raw = match.group(1).replace('.', '')
-            ano = match.group(2)
-            project_key = ("PL", numero_raw, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
-
+        
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
