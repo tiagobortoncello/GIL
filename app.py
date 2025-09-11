@@ -237,6 +237,7 @@ class LegislativeProcessor:
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
+        
         # Padrão para identificar e remover blocos de votação que são requerimentos, evitando a falsa identificação.
         votacao_requerimento_pattern = re.compile(
             r"Votação do Requerimento[\s\S]*?(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
@@ -248,10 +249,9 @@ class LegislativeProcessor:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
 
         pareceres_text = self.text[pareceres_start.end():]
-        # remove blocos de votação de requerimentos
-        clean_text = pareceres_text
-        for match in votacao_requerimento_pattern.finditer(pareceres_text):
-            clean_text = clean_text.replace(match.group(0), "")
+        
+        # Remove os blocos de votação de requerimentos
+        clean_text = re.sub(votacao_requerimento_pattern, "", pareceres_text)
 
         # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
         emenda_projeto_lei_pattern = re.compile(
@@ -302,6 +302,11 @@ class LegislativeProcessor:
                 sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
                 numero = last_project_match.group(3).replace(".", "")
                 ano = last_project_match.group(4)
+                
+                # Previne a associação incorreta de Requerimentos com pareceres
+                if sigla == "RQN":
+                    continue
+                
                 project_key = (sigla, numero, ano)
                 item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
                 if project_key not in found_projects:
