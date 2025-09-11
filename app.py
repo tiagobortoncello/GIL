@@ -137,7 +137,7 @@ class LegislativeProcessor:
         )
         # Adiciona a nova regex para ignorar requerimentos com "aprovado"
         aprovado_pattern = re.compile(
-            r"(da Comissão de Saúde, informando que, na.*?foi aprovado o Requerimento\s*nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4}))",
+            r"(da Comissão.*?, informando que, na.*?foi aprovado o Requerimento\s*nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4}))",
             re.IGNORECASE | re.DOTALL
         )
         reqs_to_ignore = set()
