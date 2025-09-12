@@ -135,6 +135,7 @@ class LegislativeProcessor:
             r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})",
             re.IGNORECASE | re.DOTALL
         )
+        # Adiciona a nova regex para ignorar requerimentos com "aprovado"
         aprovado_pattern = re.compile(
             r"(da Comissão.*?, informando que, na.*?foi aprovado o Requerimento\s*nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4}))",
             re.IGNORECASE | re.DOTALL
@@ -144,12 +145,14 @@ class LegislativeProcessor:
             numero_ano = match.group(1).replace(".", "")
             reqs_to_ignore.add(numero_ano)
 
+        # Adiciona os requerimentos do novo padrão de aprovação à lista de ignorados
         for match in aprovado_pattern.finditer(self.text):
             num_part = match.group(2).replace('.', '')
             ano = match.group(3)
             numero_ano = f"{num_part}/{ano}"
             reqs_to_ignore.add(numero_ano)
 
+        # 1) Requerimentos recebidos com padrão "RECEBIMENTO DE PROPOSIÇÃO" (nova regra)
         req_recebimento_pattern = re.compile(
             r"RECEBIMENTO DE PROPOSIÇÃO[\s\S]*?REQUERIMENTO Nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE | re.DOTALL
@@ -161,6 +164,8 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
 
+        # 2) RQC recebidos e aprovados (Com correção para o caractere 'º')
+        # A nova regex abaixo lida com o texto inicial e a formatação do número.
         rqc_pattern_aprovado = re.compile(
             r"É\s+recebido\s+pela\s+presidência,\s+submetido\s+a\s+votação\s+e\s+aprovado\s+o\s+Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
@@ -172,6 +177,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
 
+        # 3) RQC recebidos para apreciação (novo critério)
         rqc_recebido_apreciacao_pattern = re.compile(
             r"É recebido pela\s+presidência, para posterior apreciação, o Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE | re.DOTALL
@@ -183,6 +189,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Recebido para apreciação"])
 
+        # 4) RQN e RQC (padrão antigo)
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
@@ -200,6 +207,7 @@ class LegislativeProcessor:
                     classif = classify_req(block)
                     requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
 
+        # 5) RQN não recebidos
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         header_match = nao_recebidas_header_pattern.search(self.text)
         if header_match:
@@ -215,6 +223,7 @@ class LegislativeProcessor:
                 if numero_ano not in reqs_to_ignore:
                     requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
 
+        # Remove duplicatas
         unique_reqs = []
         seen = set()
         for r in requerimentos:
@@ -237,10 +246,12 @@ class LegislativeProcessor:
             return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
 
         pareceres_text = self.text[pareceres_start.end():]
+        # remove blocos de votação
         clean_text = pareceres_text
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
 
+        # Adiciona a nova regra para "EMENDAS AO PROJETO DE LEI"
         emenda_projeto_lei_pattern = re.compile(
             r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE | re.DOTALL
@@ -295,6 +306,7 @@ class LegislativeProcessor:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
                 
+        # Adiciona a nova regra
         emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
         for match in emenda_projeto_lei_pattern.finditer(clean_text):
             numero_raw = match.group(1).replace('.', '')
@@ -375,140 +387,157 @@ class ExecutiveProcessor:
         self.pdf_bytes = pdf_bytes
 
     def process_pdf(self) -> pd.DataFrame:
-        dados = []
+        trechos = []
         try:
             with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
                 for i, pagina in enumerate(pdf.pages, start=1):
                     largura, altura = pagina.width, pagina.height
-                    
                     for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
                         coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
                         texto_limpo = re.sub(r'\s+', ' ', coluna).strip()
-
-                        if not re.search(r'Leis\s*e\s*Decretos', texto_limpo, re.IGNORECASE):
-                            continue
-
-                        norma_regex = re.compile(
-                            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
-                        )
-                        comandos_regex = re.compile(
-                            r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
-                            re.IGNORECASE
-                        )
-                        norma_alterada_regex = re.compile(
-                            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
-                            re.IGNORECASE
-                        )
-                        mapa_tipos = {
-                            "LEI": "LEI", "LEI COMPLEMENTAR": "LCP",
-                            "DECRETO": "DEC", "DECRETO NE": "DNE"
-                        }
-                        
-                        eventos = []
-                        for m in norma_regex.finditer(texto_limpo):
-                            eventos.append(('published', m.start(), m))
-                        for c in comandos_regex.finditer(texto_limpo):
-                            eventos.append(('command', c.start(), c))
-                        eventos.sort(key=lambda e: e[1])
-
-                        ultima_norma = None
-                        seen_alteracoes = set()
-
-                        for ev in eventos:
-                            tipo_ev, pos_ev, match_obj = ev
-                            command_text = match_obj.group(0).lower()
-
-                            if tipo_ev == 'published':
-                                match = match_obj
-                                tipo_raw = match.group(1).strip()
-                                tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
-                                numero = match.group(2).replace(" ", "").replace(".", "")
-                                data_texto = match.group(3).strip()
-
-                                try:
-                                    partes = data_texto.split(" DE ")
-                                    dia = partes[0].zfill(2)
-                                    mes = meses[partes[1].upper()]
-                                    ano = partes[2]
-                                    sancao = f"{dia}/{mes}/{ano}"
-                                except:
-                                    sancao = ""
-
-                                linha = {
-                                    "Página": i,
-                                    "Coluna": col_num,
-                                    "Sanção": sancao,
-                                    "Tipo": tipo,
-                                    "Número": numero,
-                                    "Alterações": ""
-                                }
-                                dados.append(linha)
-                                ultima_norma = linha
-                                seen_alteracoes = set()
-                            
-                            elif tipo_ev == 'command':
-                                if ultima_norma is None:
-                                    continue
-
-                                raio = 150
-                                start_block = max(0, pos_ev - raio)
-                                end_block = min(len(texto_limpo), pos_ev + raio)
-                                bloco = texto_limpo[start_block:end_block]
-
-                                if 'revogado' in command_text:
-                                    alteracoes_para_processar = list(norma_alterada_regex.finditer(bloco))
-                                else:
-                                    alteracoes_candidatas = list(norma_alterada_regex.finditer(bloco))
-                                    if not alteracoes_candidatas:
-                                        continue
-                                    
-                                    pos_comando_no_bloco = pos_ev - start_block
-                                    melhor_candidato = min(
-                                        alteracoes_candidatas,
-                                        key=lambda m: abs(m.start() - pos_comando_no_bloco)
-                                    )
-                                    alteracoes_para_processar = [melhor_candidato]
-
-                                if not alteracoes_para_processar:
-                                    continue
-
-                                for alt in alteracoes_para_processar:
-                                    tipo_alt_raw = alt.group(1).strip()
-                                    tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
-                                    num_alt = alt.group(2).replace(" ", "").replace(".", "").replace("/", "")
-                                    data_texto_alt = alt.group(3)
-                                    ano_alt = ""
-                                    if data_texto_alt:
-                                        ano_match = re.search(r'(\d{4})', data_texto_alt)
-                                        if ano_match:
-                                            ano_alt = ano_match.group(1)
-                                    
-                                    chave_alt = f"{tipo_alt} {num_alt}"
-                                    if ano_alt:
-                                        chave_alt += f" {ano_alt}"
-
-                                    if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
-                                        continue
-
-                                    if chave_alt in seen_alteracoes:
-                                        continue
-                                    seen_alteracoes.add(chave_alt)
-
-                                    if ultima_norma["Alterações"] == "":
-                                        ultima_norma["Alterações"] = chave_alt
-                                    else:
-                                        dados.append({
-                                            "Página": "",
-                                            "Coluna": "",
-                                            "Sanção": "",
-                                            "Tipo": "",
-                                            "Número": "",
-                                            "Alterações": chave_alt
-                                        })
+                        trechos.append({
+                            "pagina": i,
+                            "coluna": col_num,
+                            "texto": texto_limpo
+                        })
         except Exception as e:
-            st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
+            st.error(f"Erro ao extrair texto do PDF do Executivo: {e}")
             return pd.DataFrame()
 
+        start_idx = next((idx for idx, t in enumerate(trechos) if re.search(r'Leis\s*e\s*Decretos', t["texto"], re.IGNORECASE)), None)
+        end_idx = next((idx for idx, t in reversed(list(enumerate(trechos))) if re.search(r'Atos\s*do\s*Governador', t["texto"], re.IGNORECASE)), None)
+
+        if start_idx is None or end_idx is None or start_idx > end_idx:
+            st.warning("Não foi encontrado o trecho de 'Leis e Decretos'.")
+            return pd.DataFrame()
+
+        norma_regex = re.compile(
+            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
+        )
+        comandos_regex = re.compile(
+            r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
+            re.IGNORECASE
+        )
+        norma_alterada_regex = re.compile(
+            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
+            re.IGNORECASE
+        )
+        mapa_tipos = {
+            "LEI": "LEI",
+            "LEI COMPLEMENTAR": "LCP",
+            "DECRETO": "DEC",
+            "DECRETO NE": "DNE"
+        }
+
+        dados = []
+        for t in trechos[start_idx:end_idx+1]:
+            pagina = t["pagina"]
+            coluna = t["coluna"]
+            texto = t["texto"]
+
+            eventos = []
+            for m in norma_regex.finditer(texto):
+                eventos.append(('published', m.start(), m))
+            for c in comandos_regex.finditer(texto):
+                eventos.append(('command', c.start(), c))
+            eventos.sort(key=lambda e: e[1])
+
+            ultima_norma = None
+            seen_alteracoes = set()
+
+            for ev in eventos:
+                tipo_ev, pos_ev, match_obj = ev
+                command_text = match_obj.group(0).lower()
+
+                if tipo_ev == 'published':
+                    match = match_obj
+                    tipo_raw = match.group(1).strip()
+                    tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
+                    numero = match.group(2).replace(" ", "").replace(".", "")
+                    data_texto = match.group(3).strip()
+
+                    try:
+                        partes = data_texto.split(" DE ")
+                        dia = partes[0].zfill(2)
+                        mes = meses[partes[1]]
+                        ano = partes[2]
+                        sancao = f"{dia}/{mes}/{ano}"
+                    except:
+                        sancao = ""
+
+                    linha = {
+                        "Página": pagina,
+                        "Coluna": coluna,
+                        "Sanção": sancao,
+                        "Tipo": tipo,
+                        "Número": numero,
+                        "Alterações": ""
+                    }
+                    dados.append(linha)
+                    ultima_norma = linha
+                    seen_alteracoes = set()
+
+                elif tipo_ev == 'command':
+                    if ultima_norma is None:
+                        continue
+
+                    raio = 150
+                    start_block = max(0, pos_ev - raio)
+                    end_block = min(len(texto), pos_ev + raio)
+                    bloco = texto[start_block:end_block]
+
+                    if 'revogado' in command_text:
+                        alteracoes_para_processar = list(norma_alterada_regex.finditer(bloco))
+                    else:
+                        alteracoes_candidatas = list(norma_alterada_regex.finditer(bloco))
+                        if not alteracoes_candidatas:
+                            continue
+                        
+                        pos_comando_no_bloco = pos_ev - start_block
+                        melhor_candidato = min(
+                            alteracoes_candidatas,
+                            key=lambda m: abs(m.start() - pos_comando_no_bloco)
+                        )
+                        alteracoes_para_processar = [melhor_candidato]
+
+                    if not alteracoes_para_processar:
+                        continue
+
+                    for alt in alteracoes_para_processar:
+                        tipo_alt_raw = alt.group(1).strip()
+                        tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+                        num_alt = alt.group(2).replace(" ", "").replace(".", "").replace("/", "")
+
+                        data_texto_alt = alt.group(3)
+                        ano_alt = ""
+                        if data_texto_alt:
+                            ano_match = re.search(r'(\d{4})', data_texto_alt)
+                            if ano_match:
+                                ano_alt = ano_match.group(1)
+                        
+                        chave_alt = f"{tipo_alt} {num_alt}"
+                        if ano_alt:
+                            chave_alt += f" {ano_alt}"
+
+                        if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
+                            continue
+
+                        if chave_alt in seen_alteracoes:
+                            continue
+                        seen_alteracoes.add(chave_alt)
+
+                        if ultima_norma["Alterações"] == "":
+                            ultima_norma["Alterações"] = chave_alt
+                        else:
+                            dados.append({
+                                "Página": "",
+                                "Coluna": "",
+                                "Sanção": "",
+                                "Tipo": "",
+                                "Número": "",
+                                "Alterações": chave_alt
+                            })
+        
         return pd.DataFrame(dados) if dados else pd.DataFrame()
 
     def to_csv(self):
@@ -552,16 +581,14 @@ def run_app():
     """, unsafe_allow_html=True)
 
     st.divider()
-    
-    # Esta linha foi movida para o início da função para garantir que a variável seja sempre definida.
     diario_escolhido = st.radio(
         "Selecione o tipo de Diário para extração:",
         ('Legislativo', 'Administrativo', 'Executivo'),
         horizontal=True
     )
-    
     st.divider()
 
+    # --- Modo de entrada do PDF ---
     modo = "Upload de arquivo"
     if diario_escolhido != 'Executivo':
         modo = st.radio(
@@ -579,6 +606,7 @@ def run_app():
         if uploaded_file is not None:
             pdf_bytes = uploaded_file.read()
     else:
+        # Link da internet
         url = st.text_input("Cole o link do PDF aqui:")
         if url:
             try:
@@ -598,12 +626,14 @@ def run_app():
     if pdf_bytes:
         try:
             if diario_escolhido == 'Legislativo':
+                # Usa PyPDF2 para extrair texto do PDF em memória
                 reader = PdfReader(io.BytesIO(pdf_bytes))
                 text = ""
                 for page in reader.pages:
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
+                # Normalização básica
                 text = re.sub(r"[ \t]+", " ", text)
                 text = re.sub(r"\n+", "\n", text)
                 
@@ -611,6 +641,7 @@ def run_app():
                     processor = LegislativeProcessor(text)
                     extracted_data = processor.process_all()
 
+                    # Gera Excel em memória
                     output = io.BytesIO()
                     excel_file_name = "Legislativo_Extraido.xlsx"
                     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -633,7 +664,6 @@ def run_app():
                         download_data = None
                         file_name = None
                         mime_type = None
-            
             else: # Executivo
                 with st.spinner('Extraindo dados do Diário do Executivo...'):
                     processor = ExecutiveProcessor(pdf_bytes)
