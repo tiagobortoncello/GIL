@@ -70,6 +70,16 @@ def classify_req(segment: str) -> str:
         return "Manifestação de apoio"
     return ""
 
+def _get_group_text(match, group_num):
+    """
+    Função auxiliar para acessar um grupo de captura com segurança.
+    Retorna a string do grupo ou uma string vazia se o grupo não existir.
+    """
+    try:
+        return match.group(group_num) or ""
+    except IndexError:
+        return ""
+
 # --- Classes de Processamento ---
 class LegislativeProcessor:
     """ Processa o texto de um Diário do Legislativo, extraindo normas, proposições, requerimentos e pareceres. """
@@ -393,8 +403,12 @@ class ExecutiveProcessor:
         norma_regex = re.compile(
             r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
         )
+        # O grupo 1 é 'revogado|acrescentado|alterado|vigorar'
+        # O grupo 2 é o tipo da alteração
+        # O grupo 3 é o número da alteração
+        # O grupo 4 é a data da alteração
         alteracao_regex = re.compile(
-            r'(?:revogado|acrescentado|alterado|vigorar)\s*.*?(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
+            r'(revogado|acrescentado|alterado|vigorar)[\s\S]*?(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
             re.IGNORECASE | re.DOTALL
         )
         
@@ -447,10 +461,10 @@ class ExecutiveProcessor:
                 tipo_ev, _, match_obj, coluna = ev
                 
                 if tipo_ev == 'published':
-                    tipo_raw = match_obj.group(1).strip() if match_obj.group(1) else ""
+                    tipo_raw = _get_group_text(match_obj, 1)
                     tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
-                    numero = match_obj.group(2).replace(" ", "").replace(".", "") if match_obj.group(2) else ""
-                    data_texto = match_obj.group(3).strip() if match_obj.group(3) else ""
+                    numero = _get_group_text(match_obj, 2).replace(" ", "").replace(".", "")
+                    data_texto = _get_group_text(match_obj, 3).strip()
 
                     sancao = ""
                     if data_texto:
@@ -477,11 +491,11 @@ class ExecutiveProcessor:
                     if ultima_norma_principal is None:
                         continue
                     
-                    tipo_alt_raw = match_obj.group(2).strip() if match_obj.group(2) else ""
+                    tipo_alt_raw = _get_group_text(match_obj, 2)
                     tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
-                    num_alt = match_obj.group(3).replace(" ", "").replace(".", "").replace("/", "") if match_obj.group(3) else ""
+                    num_alt = _get_group_text(match_obj, 3).replace(" ", "").replace(".", "").replace("/", "")
 
-                    data_texto_alt = match_obj.group(4) if match_obj.group(4) else ""
+                    data_texto_alt = _get_group_text(match_obj, 4)
                     ano_alt = ""
                     if data_texto_alt:
                         ano_match = re.search(r'(\d{4})', data_texto_alt)
