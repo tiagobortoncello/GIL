@@ -155,12 +155,12 @@ class LegislativeProcessor:
 
         # 1) Requerimentos prejudicados (Padrão Aprimorado)
         prejudicado_pattern = re.compile(
-            r"declara a prejudicialidade dos Requerimentos(?: em Comissão)? nºs? ([\s\S]*?)(?:\.|\n\n|$)",
+            r"prejudicialidade dos requerimentos? (?:em comissão)? (?:nºs? )?([\s\S]*?)(?:\.|\n\n|$)",
             re.IGNORECASE
         )
         for match in prejudicado_pattern.finditer(self.text):
             list_text = match.group(1)
-            for sub_match in re.finditer(r'(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})', list_text):
+            for sub_match in re.finditer(r'(\d{1,5}(?:\.\d{0,3})?)\s*/\s*(\d{4})', list_text):
                 num_part = sub_match.group(1).replace('.', '')
                 ano = sub_match.group(2)
                 
