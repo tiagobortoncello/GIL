@@ -4,3 +4,4 @@ PyPDF2
 PyMuPDF
 requests
 pdfplumber
+openpyxl
