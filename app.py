@@ -131,48 +131,44 @@ class LegislativeProcessor:
 
     def process_requerimentos(self) -> pd.DataFrame:
         requerimentos = []
+        reqs_to_ignore = set()
+        
+        # Padrão para identificar requerimentos que devem ser ignorados
         ignore_pattern = re.compile(
             r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})",
             re.IGNORECASE | re.DOTALL
         )
-        # Adiciona a nova regex para ignorar requerimentos com "aprovado"
         aprovado_pattern = re.compile(
             r"(da Comissão.*?, informando que, na.*?foi aprovado o Requerimento\s*nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4}))",
             re.IGNORECASE | re.DOTALL
         )
-        reqs_to_ignore = set()
+        
         for match in ignore_pattern.finditer(self.text):
             numero_ano = match.group(1).replace(".", "")
             reqs_to_ignore.add(numero_ano)
 
-        # Adiciona os requerimentos do novo padrão de aprovação à lista de ignorados
         for match in aprovado_pattern.finditer(self.text):
             num_part = match.group(2).replace('.', '')
             ano = match.group(3)
             numero_ano = f"{num_part}/{ano}"
             reqs_to_ignore.add(numero_ano)
 
-        # 1) Requerimentos prejudicados (NOVA REGRA)
+        # 1) Requerimentos prejudicados (Padrão Aprimorado)
         prejudicado_pattern = re.compile(
-            r"declara a prejudicialidade dos Requerimentos em Comissão nºs? (\d{1,5}(?:\.\d{0,3})?)/(\d{4})(?: e |,\s*)?(.*?)(?:; e |$)",
-            re.IGNORECASE | re.DOTALL
+            r"declara a prejudicialidade dos Requerimentos em Comissão nºs? ([\s\S]*?)(?:\.|\n\n|$)",
+            re.IGNORECASE
         )
         for match in prejudicado_pattern.finditer(self.text):
-            # Processa o primeiro requerimento do grupo
-            num_part = match.group(1).replace('.', '')
-            ano = match.group(2)
-            numero_ano = f"{num_part}/{ano}"
-            requerimentos.append(["RQC", num_part, ano, "", "", "Prejudicado"])
+            list_text = match.group(1)
+            for sub_match in re.finditer(r'(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})', list_text):
+                num_part = sub_match.group(1).replace('.', '')
+                ano = sub_match.group(2)
+                
+                numero_ano = f"{num_part}/{ano}"
+                if numero_ano not in reqs_to_ignore:
+                    requerimentos.append(["RQC", num_part, ano, "", "", "Prejudicado"])
 
-            # Processa o texto subsequente para encontrar outros requerimentos prejudicados
-            if match.group(3):
-                sub_reqs = re.findall(r"(\d{1,5}(?:\.\d{0,3})?)/(\d{4})", match.group(3))
-                for sub_num, sub_ano in sub_reqs:
-                    sub_num_part = sub_num.replace('.', '')
-                    sub_numero_ano = f"{sub_num_part}/{sub_ano}"
-                    requerimentos.append(["RQC", sub_num_part, sub_ano, "", "", "Prejudicado"])
-
-        # 2) Requerimentos recebidos com padrão "RECEBIMENTO DE PROPOSIÇÃO" (nova regra)
+        # 2) Requerimentos recebidos com padrão "RECEBIMENTO DE PROPOSIÇÃO"
         req_recebimento_pattern = re.compile(
             r"RECEBIMENTO DE PROPOSIÇÃO[\s\S]*?REQUERIMENTO Nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE | re.DOTALL
@@ -184,7 +180,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
 
-        # 3) RQC recebidos e aprovados (Com correção para o caractere 'º')
+        # 3) RQC recebidos e aprovados
         rqc_pattern_aprovado = re.compile(
             r"É\s+recebido\s+pela\s+presidência,\s+submetido\s+a\s+votação\s+e\s+aprovado\s+o\s+Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
@@ -196,7 +192,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
 
-        # 4) RQC recebidos para apreciação (novo critério)
+        # 4) RQC recebidos para apreciação
         rqc_recebido_apreciacao_pattern = re.compile(
             r"É recebido pela\s+presidência, para posterior apreciação, o Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE | re.DOTALL
