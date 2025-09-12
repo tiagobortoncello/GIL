@@ -389,7 +389,6 @@ class ExecutiveProcessor:
     def process_pdf(self) -> pd.DataFrame:
         dados = []
         ultima_norma_principal = None
-        seen_alteracoes = set()
         
         norma_regex = re.compile(
             r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
@@ -415,30 +414,24 @@ class ExecutiveProcessor:
                     if not found_start:
                         if re.search(r'Leis\s*e\s*Decretos', texto_pagina, re.IGNORECASE):
                             found_start = True
-                            # Remove o cabeçalho "Leis e Decretos"
                             texto_pagina = re.split(r'Leis\s*e\s*Decretos', texto_pagina, flags=re.IGNORECASE)[-1]
                         else:
-                            continue # Pula a página se ainda não encontrou o início
+                            continue
 
                     if re.search(r'Atos\s*do\s*Governador', texto_pagina, re.IGNORECASE):
-                        # Se encontrou o final, processa o restante do texto da página e encerra
                         texto_pagina = re.split(r'Atos\s*do\s*Governador', texto_pagina, flags=re.IGNORECASE)[0]
-                        self._process_page_text(texto_pagina, i, dados, ultima_norma_principal, seen_alteracoes, norma_regex, alteracao_regex, mapa_tipos)
+                        self._process_page_text(texto_pagina, i, dados, ultima_norma_principal, norma_regex, alteracao_regex, mapa_tipos)
                         break
 
-                    # Se chegou até aqui, é uma página inteira para processar
-                    self._process_page_text(texto_pagina, i, dados, ultima_norma_principal, seen_alteracoes, norma_regex, alteracao_regex, mapa_tipos)
+                    self._process_page_text(texto_pagina, i, dados, ultima_norma_principal, norma_regex, alteracao_regex, mapa_tipos)
 
         except Exception as e:
-            st.error(f"Erro ao extrair texto do PDF do Executivo: {e}")
+            st.error(f"Ocorreu um erro na extração do PDF do Executivo: {e}")
             return pd.DataFrame()
 
         return pd.DataFrame(dados) if dados else pd.DataFrame()
 
-    def _process_page_text(self, texto_pagina, pagina_num, dados, ultima_norma_principal, seen_alteracoes, norma_regex, alteracao_regex, mapa_tipos):
-        largura = 500 # Valor fixo para simplicidade, assume duas colunas
-        
-        # Simula as colunas para capturar a informação de coluna
+    def _process_page_text(self, texto_pagina, pagina_num, dados, ultima_norma_principal, norma_regex, alteracao_regex, mapa_tipos):
         colunas = [texto_pagina[:len(texto_pagina)//2], texto_pagina[len(texto_pagina)//2:]]
         
         for col_num, texto_coluna in enumerate(colunas, 1):
@@ -454,19 +447,21 @@ class ExecutiveProcessor:
                 tipo_ev, _, match_obj, coluna = ev
                 
                 if tipo_ev == 'published':
-                    tipo_raw = match_obj.group(1).strip()
+                    tipo_raw = match_obj.group(1).strip() if match_obj.group(1) else ""
                     tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
-                    numero = match_obj.group(2).replace(" ", "").replace(".", "")
-                    data_texto = match_obj.group(3).strip()
+                    numero = match_obj.group(2).replace(" ", "").replace(".", "") if match_obj.group(2) else ""
+                    data_texto = match_obj.group(3).strip() if match_obj.group(3) else ""
 
-                    try:
-                        partes = data_texto.split(" DE ")
-                        dia = partes[0].zfill(2)
-                        mes = meses[partes[1].upper()]
-                        ano = partes[2]
-                        sancao = f"{dia}/{mes}/{ano}"
-                    except:
-                        sancao = ""
+                    sancao = ""
+                    if data_texto:
+                        try:
+                            partes = data_texto.split(" DE ")
+                            dia = partes[0].zfill(2)
+                            mes = meses[partes[1].upper()]
+                            ano = partes[2]
+                            sancao = f"{dia}/{mes}/{ano}"
+                        except:
+                            sancao = ""
                     
                     ultima_norma_principal = {
                         "Página": pagina_num,
@@ -477,17 +472,16 @@ class ExecutiveProcessor:
                         "Alterações": ""
                     }
                     dados.append(ultima_norma_principal)
-                    seen_alteracoes.clear()
 
                 elif tipo_ev == 'alteration':
                     if ultima_norma_principal is None:
                         continue
                     
-                    tipo_alt_raw = match_obj.group(2).strip()
+                    tipo_alt_raw = match_obj.group(2).strip() if match_obj.group(2) else ""
                     tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
-                    num_alt = match_obj.group(3).replace(" ", "").replace(".", "").replace("/", "")
+                    num_alt = match_obj.group(3).replace(" ", "").replace(".", "").replace("/", "") if match_obj.group(3) else ""
 
-                    data_texto_alt = match_obj.group(4)
+                    data_texto_alt = match_obj.group(4) if match_obj.group(4) else ""
                     ano_alt = ""
                     if data_texto_alt:
                         ano_match = re.search(r'(\d{4})', data_texto_alt)
@@ -500,10 +494,6 @@ class ExecutiveProcessor:
 
                     if tipo_alt == ultima_norma_principal["Tipo"] and num_alt == ultima_norma_principal["Número"]:
                         continue
-
-                    if chave_alt in seen_alteracoes:
-                        continue
-                    seen_alteracoes.add(chave_alt)
 
                     if not ultima_norma_principal["Alterações"]:
                         ultima_norma_principal["Alterações"] = chave_alt
