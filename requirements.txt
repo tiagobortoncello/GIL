@@ -3,5 +3,4 @@ pandas
 PyPDF2
 PyMuPDF
 requests
-openpyxl
 pdfplumber
