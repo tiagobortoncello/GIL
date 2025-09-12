@@ -129,7 +129,7 @@ class LegislativeProcessor:
             columns=['Sigla', 'Número', 'Ano', 'Categoria']
         )
 
-        def process_requerimentos(self) -> pd.DataFrame:
+    def process_requerimentos(self) -> pd.DataFrame:
         requerimentos = []
         ignore_pattern = re.compile(
             r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})",
@@ -165,10 +165,8 @@ class LegislativeProcessor:
                 if numero_ano not in reqs_to_ignore:
                     requerimentos.append(["RQC", num_part, ano, "", "", "Prejudicado"])
         # --- FIM DA NOVA REGRA ---
-
-        # (continua com as outras regras já existentes)
-        # ...
-
+        
+        return pd.DataFrame(requerimentos)
 
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
@@ -241,17 +239,7 @@ class LegislativeProcessor:
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
-            
-        # Adiciona a nova regra
-        emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
-        for match in emenda_projeto_lei_pattern.finditer(clean_text):
-            numero_raw = match.group(1).replace('.', '')
-            ano = match.group(2)
-            project_key = ("PL", numero_raw, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
-
+        
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
@@ -630,4 +618,3 @@ def run_app():
 # --- Entrada ---
 if __name__ == "__main__":
     run_app()
-
