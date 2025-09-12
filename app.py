@@ -152,7 +152,27 @@ class LegislativeProcessor:
             numero_ano = f"{num_part}/{ano}"
             reqs_to_ignore.add(numero_ano)
 
-        # 1) Requerimentos recebidos com padrão "RECEBIMENTO DE PROPOSIÇÃO" (nova regra)
+        # 1) Requerimentos prejudicados (NOVA REGRA)
+        prejudicado_pattern = re.compile(
+            r"declara a prejudicialidade dos Requerimentos em Comissão nºs? (\d{1,5}(?:\.\d{0,3})?)/(\d{4})(?: e |,\s*)?(.*?)(?:; e |$)",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in prejudicado_pattern.finditer(self.text):
+            # Processa o primeiro requerimento do grupo
+            num_part = match.group(1).replace('.', '')
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            requerimentos.append(["RQC", num_part, ano, "", "", "Prejudicado"])
+
+            # Processa o texto subsequente para encontrar outros requerimentos prejudicados
+            if match.group(3):
+                sub_reqs = re.findall(r"(\d{1,5}(?:\.\d{0,3})?)/(\d{4})", match.group(3))
+                for sub_num, sub_ano in sub_reqs:
+                    sub_num_part = sub_num.replace('.', '')
+                    sub_numero_ano = f"{sub_num_part}/{sub_ano}"
+                    requerimentos.append(["RQC", sub_num_part, sub_ano, "", "", "Prejudicado"])
+
+        # 2) Requerimentos recebidos com padrão "RECEBIMENTO DE PROPOSIÇÃO" (nova regra)
         req_recebimento_pattern = re.compile(
             r"RECEBIMENTO DE PROPOSIÇÃO[\s\S]*?REQUERIMENTO Nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE | re.DOTALL
@@ -164,8 +184,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
 
-        # 2) RQC recebidos e aprovados (Com correção para o caractere 'º')
-        # A nova regex abaixo lida com o texto inicial e a formatação do número.
+        # 3) RQC recebidos e aprovados (Com correção para o caractere 'º')
         rqc_pattern_aprovado = re.compile(
             r"É\s+recebido\s+pela\s+presidência,\s+submetido\s+a\s+votação\s+e\s+aprovado\s+o\s+Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
             re.IGNORECASE
@@ -177,7 +196,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
 
-        # 3) RQC recebidos para apreciação (novo critério)
+        # 4) RQC recebidos para apreciação (novo critério)
         rqc_recebido_apreciacao_pattern = re.compile(
             r"É recebido pela\s+presidência, para posterior apreciação, o Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE | re.DOTALL
@@ -189,7 +208,7 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Recebido para apreciação"])
 
-        # 4) RQN e RQC (padrão antigo)
+        # 5) RQN e RQC (padrão antigo)
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
@@ -207,7 +226,7 @@ class LegislativeProcessor:
                     classif = classify_req(block)
                     requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
 
-        # 5) RQN não recebidos
+        # 6) RQN não recebidos
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         header_match = nao_recebidas_header_pattern.search(self.text)
         if header_match:
@@ -305,7 +324,7 @@ class LegislativeProcessor:
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
-                
+            
         # Adiciona a nova regra
         emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
         for match in emenda_projeto_lei_pattern.finditer(clean_text):
