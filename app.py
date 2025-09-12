@@ -387,46 +387,31 @@ class ExecutiveProcessor:
         self.pdf_bytes = pdf_bytes
 
     def process_pdf(self) -> pd.DataFrame:
-        texto_relevante = ""
-        encontrou_inicio = False
-
+        trechos = []
         try:
             with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
+                # Otimiza o processamento em blocos para não sobrecarregar a memória
                 for i, pagina in enumerate(pdf.pages, start=1):
-                    # Extrai o texto da página inteira
-                    texto_pagina = pagina.extract_text(layout=True) or ""
-
-                    # Checa o delimitador de fim "Atos do Governador"
-                    if re.search(r'Atos\s*do\s*Governador', texto_pagina, re.IGNORECASE):
-                        # Se encontrarmos o fim, extraímos apenas a parte relevante
-                        partes = re.split(r'(Atos\s*do\s*Governador)', texto_pagina, flags=re.IGNORECASE)
-                        texto_relevante += partes[0]
-                        # Finaliza o loop de páginas
-                        break
-                    
-                    # Checa o delimitador de início "Leis e Decretos"
-                    if not encontrou_inicio:
-                        if re.search(r'Leis\s*e\s*Decretos', texto_pagina, re.IGNORECASE):
-                            encontrou_inicio = True
-                            # Extrai o texto a partir do início do bloco relevante
-                            partes = re.split(r'(Leis\s*e\s*Decretos)', texto_pagina, flags=re.IGNORECASE)
-                            # Adiciona a parte após o delimitador (partes[2])
-                            texto_relevante += partes[2]
-                    else:
-                        # Se o início já foi encontrado, adiciona o texto da página inteira
-                        texto_relevante += texto_pagina
-        
+                    largura, altura = pagina.width, pagina.height
+                    for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
+                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                        trechos.append({
+                            "pagina": i,
+                            "coluna": col_num,
+                            "texto": coluna
+                        })
         except Exception as e:
             st.error(f"Erro ao extrair texto do PDF do Executivo: {e}")
             return pd.DataFrame()
 
-        if not texto_relevante:
-            st.warning("Não foi encontrado o trecho de 'Leis e Decretos'.")
+        start_idx = next((idx for idx, t in enumerate(trechos) if re.search(r'Leis\s*e\s*Decretos', t["texto"], re.IGNORECASE)), None)
+        end_idx = next((idx for idx, t in reversed(list(enumerate(trechos))) if re.search(r'Atos\s*do\s*Governador', t["texto"], re.IGNORECASE)), None)
+
+        if start_idx is None or end_idx is None or start_idx > end_idx:
+            st.warning("Não foi encontrado o trecho de 'Leis e Decretos' ou 'Atos do Governador'.")
             return pd.DataFrame()
 
-        # Continua o processamento com o texto filtrado
-        texto = re.sub(r'\s+', ' ', texto_relevante).strip()
-
+        # Regexes para extração
         norma_regex = re.compile(
             r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
         )
@@ -435,9 +420,10 @@ class ExecutiveProcessor:
             re.IGNORECASE
         )
         norma_alterada_regex = re.compile(
-            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
-            re.IGNORECASE
+            r'ALTERAÇÕES[\s\S]*?(?:DA\s+NORMA)?\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
+            re.IGNORECASE | re.DOTALL
         )
+        
         mapa_tipos = {
             "LEI": "LEI",
             "LEI COMPLEMENTAR": "LCP",
@@ -449,107 +435,112 @@ class ExecutiveProcessor:
         ultima_norma = None
         seen_alteracoes = set()
 
-        eventos = []
-        for m in norma_regex.finditer(texto):
-            eventos.append(('published', m.start(), m))
-        for c in comandos_regex.finditer(texto):
-            eventos.append(('command', c.start(), c))
-        eventos.sort(key=lambda e: e[1])
+        for t in trechos[start_idx:end_idx+1]:
+            pagina = t["pagina"]
+            coluna = t["coluna"]
+            texto = re.sub(r'\s+', ' ', t["texto"]).strip()
+            
+            # Divide o texto do bloco em eventos (normas publicadas ou comandos de alteração)
+            eventos = []
+            for m in norma_regex.finditer(texto):
+                eventos.append(('published', m.start(), m))
+            for c in comandos_regex.finditer(texto):
+                eventos.append(('command', c.start(), c))
+            eventos.sort(key=lambda e: e[1])
 
-        for ev in eventos:
-            tipo_ev, pos_ev, match_obj = ev
-            command_text = match_obj.group(0).lower()
+            for ev in eventos:
+                tipo_ev, pos_ev, match_obj = ev
+                command_text = match_obj.group(0).lower()
 
-            if tipo_ev == 'published':
-                match = match_obj
-                tipo_raw = match.group(1).strip()
-                tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
-                numero = match.group(2).replace(" ", "").replace(".", "")
-                data_texto = match.group(3).strip()
+                if tipo_ev == 'published':
+                    # Lógica para extrair a norma publicada
+                    match = match_obj
+                    tipo_raw = match.group(1).strip()
+                    tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
+                    numero = match.group(2).replace(" ", "").replace(".", "")
+                    data_texto = match.group(3).strip()
 
-                try:
-                    partes = data_texto.split(" DE ")
-                    dia = partes[0].zfill(2)
-                    mes = meses[partes[1]]
-                    ano = partes[2]
-                    sancao = f"{dia}/{mes}/{ano}"
-                except:
-                    sancao = ""
+                    try:
+                        partes = data_texto.split(" DE ")
+                        dia = partes[0].zfill(2)
+                        mes = meses[partes[1].upper()]
+                        ano = partes[2]
+                        sancao = f"{dia}/{mes}/{ano}"
+                    except:
+                        sancao = ""
 
-                linha = {
-                    "Página": "",
-                    "Coluna": "",
-                    "Sanção": sancao,
-                    "Tipo": tipo,
-                    "Número": numero,
-                    "Alterações": ""
-                }
-                dados.append(linha)
-                ultima_norma = linha
-                seen_alteracoes = set()
-
-            elif tipo_ev == 'command':
-                if ultima_norma is None:
-                    continue
-
-                raio = 150
-                start_block = max(0, pos_ev - raio)
-                end_block = min(len(texto), pos_ev + raio)
-                bloco = texto[start_block:end_block]
-
-                if 'revogado' in command_text:
-                    alteracoes_para_processar = list(norma_alterada_regex.finditer(bloco))
-                else:
-                    alteracoes_candidatas = list(norma_alterada_regex.finditer(bloco))
-                    if not alteracoes_candidatas:
-                        continue
-                    
-                    pos_comando_no_bloco = pos_ev - start_block
-                    melhor_candidato = min(
-                        alteracoes_candidatas,
-                        key=lambda m: abs(m.start() - pos_comando_no_bloco)
-                    )
-                    alteracoes_para_processar = [melhor_candidato]
-
-                if not alteracoes_para_processar:
-                    continue
-
-                for alt in alteracoes_para_processar:
-                    tipo_alt_raw = alt.group(1).strip()
-                    tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
-                    num_alt = alt.group(2).replace(" ", "").replace(".", "").replace("/", "")
-
-                    data_texto_alt = alt.group(3)
-                    ano_alt = ""
-                    if data_texto_alt:
-                        ano_match = re.search(r'(\d{4})', data_texto_alt)
-                        if ano_match:
-                            ano_alt = ano_match.group(1)
-                    
-                    chave_alt = f"{tipo_alt} {num_alt}"
-                    if ano_alt:
-                        chave_alt += f" {ano_alt}"
-
-                    if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
+                    linha = {
+                        "Página": pagina,
+                        "Coluna": coluna,
+                        "Sanção": sancao,
+                        "Tipo": tipo,
+                        "Número": numero,
+                        "Alterações": ""
+                    }
+                    dados.append(linha)
+                    ultima_norma = linha
+                    seen_alteracoes = set()
+                
+                elif tipo_ev == 'command':
+                    if ultima_norma is None:
                         continue
 
-                    if chave_alt in seen_alteracoes:
-                        continue
-                    seen_alteracoes.add(chave_alt)
+                    # Lógica para extrair a norma alterada
+                    raio = 500  # Aumenta o raio de busca para ser mais preciso
+                    start_block = max(0, pos_ev - raio)
+                    end_block = min(len(texto), pos_ev + raio)
+                    bloco = texto[start_block:end_block]
 
-                    if ultima_norma["Alterações"] == "":
-                        ultima_norma["Alterações"] = chave_alt
+                    alteracoes_para_processar = []
+                    # Tenta capturar a alteração no raio de busca
+                    if 'revogado' in command_text:
+                        alteracoes_para_processar = list(norma_alterada_regex.finditer(bloco))
                     else:
-                        dados.append({
-                            "Página": "",
-                            "Coluna": "",
-                            "Sanção": "",
-                            "Tipo": "",
-                            "Número": "",
-                            "Alterações": chave_alt
-                        })
+                        # Para os outros comandos, pega o primeiro que encontrar
+                        match_alteracao = norma_alterada_regex.search(bloco)
+                        if match_alteracao:
+                            alteracoes_para_processar = [match_alteracao]
+
+                    if not alteracoes_para_processar:
+                        continue
+
+                    for alt in alteracoes_para_processar:
+                        tipo_alt_raw = alt.group(1).strip()
+                        tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+                        num_alt = alt.group(2).replace(" ", "").replace(".", "").replace("/", "")
+
+                        data_texto_alt = alt.group(3)
+                        ano_alt = ""
+                        if data_texto_alt:
+                            ano_match = re.search(r'(\d{4})', data_texto_alt)
+                            if ano_match:
+                                ano_alt = ano_match.group(1)
+                        
+                        chave_alt = f"{tipo_alt} {num_alt}"
+                        if ano_alt:
+                            chave_alt += f" {ano_alt}"
+
+                        if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
+                            continue
+
+                        if chave_alt in seen_alteracoes:
+                            continue
+                        seen_alteracoes.add(chave_alt)
+
+                        if ultima_norma["Alterações"] == "":
+                            ultima_norma["Alterações"] = chave_alt
+                        else:
+                            dados.append({
+                                "Página": pagina,
+                                "Coluna": coluna,
+                                "Sanção": "",
+                                "Tipo": "",
+                                "Número": "",
+                                "Alterações": chave_alt
+                            })
         
         return pd.DataFrame(dados) if dados else pd.DataFrame()
+
 
     def to_csv(self):
         df = self.process_pdf()
