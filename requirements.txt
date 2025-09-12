@@ -1,7 +1,6 @@
 streamlit
 pandas
+PyPDF2
 PyMuPDF
-pypdf2
 requests
 openpyxl
-pdfplumber
