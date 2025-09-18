@@ -583,7 +583,7 @@ def run_app():
     st.divider()
     diario_escolhido = st.radio(
         "Selecione o tipo de Diário para extração:",
-        ('Legislativo', 'Administrativo', 'Executivo (não utilizar)'),
+        ('Legislativo', 'Administrativo', 'Executivo (não utilizar por enquanto)'),
         horizontal=True
     )
     st.divider()
@@ -694,4 +694,5 @@ def run_app():
 # --- Entrada ---
 if __name__ == "__main__":
     run_app()
+
 
