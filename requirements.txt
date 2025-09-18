@@ -5,3 +5,4 @@ PyMuPDF
 requests
 pdfplumber
 openpyxl
+pypdf
