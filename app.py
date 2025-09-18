@@ -608,13 +608,19 @@ def run_app():
     st.divider()
 
     # --- Modo de entrada do PDF ---
-    modo = st.radio(
-        "Como deseja fornecer o PDF?",
-        ("Upload de arquivo", "Link da internet"),
-        horizontal=True
-    )
-
     pdf_bytes = None
+    
+    # Lógica condicional para exibir ou não a opção de link
+    if diario_escolhido == 'Executivo':
+        modo = "Upload de arquivo"
+        st.info("Para o Diário do Executivo, é necessário fazer o upload do arquivo.")
+    else:
+        modo = st.radio(
+            "Como deseja fornecer o PDF?",
+            ("Upload de arquivo", "Link da internet"),
+            horizontal=True
+        )
+
     if modo == "Upload de arquivo":
         uploaded_file = st.file_uploader(
             f"Faça o upload do arquivo PDF do **Diário {diario_escolhido}**.",
