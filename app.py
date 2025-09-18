@@ -8,7 +8,7 @@
 import streamlit as st
 import re
 import pandas as pd
-from PyPDF2 import PdfReader
+import pypdf # Usado para encontrar as páginas relevantes de forma leve
 import io
 import csv
 import fitz # PyMuPDF
@@ -385,65 +385,88 @@ class ExecutiveProcessor:
     """Processa o texto de um Diário do Executivo, extraindo normas e alterações."""
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
-
-    def process_pdf(self) -> pd.DataFrame:
-        trechos = []
-        try:
-            with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
-                for i, pagina in enumerate(pdf.pages, start=1):
-                    largura, altura = pagina.width, pagina.height
-                    for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
-                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = re.sub(r'\s+', ' ', coluna).strip()
-                        trechos.append({
-                            "pagina": i,
-                            "coluna": col_num,
-                            "texto": texto_limpo
-                        })
-        except Exception as e:
-            st.error(f"Erro ao extrair texto do PDF do Executivo: {e}")
-            return pd.DataFrame()
-
-        start_idx = next((idx for idx, t in enumerate(trechos) if re.search(r'Leis\s*e\s*Decretos', t["texto"], re.IGNORECASE)), None)
-        end_idx = next((idx for idx, t in reversed(list(enumerate(trechos))) if re.search(r'Atos\s*do\s*Governador', t["texto"], re.IGNORECASE)), None)
-
-        if start_idx is None or end_idx is None or start_idx > end_idx:
-            st.warning("Não foi encontrado o trecho de 'Leis e Decretos'.")
-            return pd.DataFrame()
-
-        norma_regex = re.compile(
-            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
-        )
-        comandos_regex = re.compile(
-            r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
-            re.IGNORECASE
-        )
-        norma_alterada_regex = re.compile(
-            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
-            re.IGNORECASE
-        )
-        mapa_tipos = {
+        self.mapa_tipos = {
             "LEI": "LEI",
             "LEI COMPLEMENTAR": "LCP",
             "DECRETO": "DEC",
             "DECRETO NE": "DNE"
         }
+        self.norma_regex = re.compile(
+            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
+        )
+        self.comandos_regex = re.compile(
+            r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
+            re.IGNORECASE
+        )
+        self.norma_alterada_regex = re.compile(
+            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
+            re.IGNORECASE
+        )
+        
+    def find_relevant_pages(self) -> tuple:
+        """Encontra as páginas de início e fim da seção relevante de forma eficiente."""
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
+            start_page_num, end_page_num = None, None
+            
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text() or ""
+                if not text.strip():
+                    continue
+                if re.search(r'Leis\s*e\s*Decretos', text, re.IGNORECASE):
+                    start_page_num = i
+                if re.search(r'Atos\s*do\s*Governador', text, re.IGNORECASE):
+                    end_page_num = i
 
+            if start_page_num is None or end_page_num is None or start_page_num > end_page_num:
+                st.warning("Não foi encontrado o trecho de 'Leis e Decretos' ou 'Atos do Governador' para delimitar a seção.")
+                return None, None
+
+            return start_page_num, end_page_num + 1
+
+        except Exception as e:
+            st.error(f"Erro ao buscar páginas relevantes com PyPDF: {e}")
+            return None, None
+
+    def process_pdf(self) -> pd.DataFrame:
+        start_page_idx, end_page_idx = self.find_relevant_pages()
+        if start_page_idx is None:
+            return pd.DataFrame()
+
+        trechos = []
+        try:
+            with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
+                # Processa apenas o subconjunto de páginas relevante
+                for i in range(start_page_idx, end_page_idx):
+                    pagina = pdf.pages[i]
+                    largura, altura = pagina.width, pagina.height
+                    for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
+                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                        texto_limpo = re.sub(r'\s+', ' ', coluna).strip()
+                        trechos.append({
+                            "pagina": i + 1,
+                            "coluna": col_num,
+                            "texto": texto_limpo
+                        })
+        except Exception as e:
+            st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
+            return pd.DataFrame()
+            
         dados = []
-        for t in trechos[start_idx:end_idx+1]:
+        ultima_norma = None
+        seen_alteracoes = set()
+
+        for t in trechos:
             pagina = t["pagina"]
             coluna = t["coluna"]
             texto = t["texto"]
 
             eventos = []
-            for m in norma_regex.finditer(texto):
+            for m in self.norma_regex.finditer(texto):
                 eventos.append(('published', m.start(), m))
-            for c in comandos_regex.finditer(texto):
+            for c in self.comandos_regex.finditer(texto):
                 eventos.append(('command', c.start(), c))
             eventos.sort(key=lambda e: e[1])
-
-            ultima_norma = None
-            seen_alteracoes = set()
 
             for ev in eventos:
                 tipo_ev, pos_ev, match_obj = ev
@@ -452,14 +475,14 @@ class ExecutiveProcessor:
                 if tipo_ev == 'published':
                     match = match_obj
                     tipo_raw = match.group(1).strip()
-                    tipo = mapa_tipos.get(tipo_raw.upper(), tipo_raw)
+                    tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
                     numero = match.group(2).replace(" ", "").replace(".", "")
                     data_texto = match.group(3).strip()
 
                     try:
                         partes = data_texto.split(" DE ")
                         dia = partes[0].zfill(2)
-                        mes = meses[partes[1]]
+                        mes = meses[partes[1].upper()]
                         ano = partes[2]
                         sancao = f"{dia}/{mes}/{ano}"
                     except:
@@ -486,26 +509,22 @@ class ExecutiveProcessor:
                     end_block = min(len(texto), pos_ev + raio)
                     bloco = texto[start_block:end_block]
 
+                    alteracoes_para_processar = []
                     if 'revogado' in command_text:
-                        alteracoes_para_processar = list(norma_alterada_regex.finditer(bloco))
+                        alteracoes_para_processar = list(self.norma_alterada_regex.finditer(bloco))
                     else:
-                        alteracoes_candidatas = list(norma_alterada_regex.finditer(bloco))
-                        if not alteracoes_candidatas:
-                            continue
-                        
-                        pos_comando_no_bloco = pos_ev - start_block
-                        melhor_candidato = min(
-                            alteracoes_candidatas,
-                            key=lambda m: abs(m.start() - pos_comando_no_bloco)
-                        )
-                        alteracoes_para_processar = [melhor_candidato]
-
-                    if not alteracoes_para_processar:
-                        continue
-
+                        alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
+                        if alteracoes_candidatas:
+                            pos_comando_no_bloco = pos_ev - start_block
+                            melhor_candidato = min(
+                                alteracoes_candidatas,
+                                key=lambda m: abs(m.start() - pos_comando_no_bloco)
+                            )
+                            alteracoes_para_processar = [melhor_candidato]
+                    
                     for alt in alteracoes_para_processar:
                         tipo_alt_raw = alt.group(1).strip()
-                        tipo_alt = mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+                        tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
                         num_alt = alt.group(2).replace(" ", "").replace(".", "").replace("/", "")
 
                         data_texto_alt = alt.group(3)
@@ -514,7 +533,7 @@ class ExecutiveProcessor:
                             ano_match = re.search(r'(\d{4})', data_texto_alt)
                             if ano_match:
                                 ano_alt = ano_match.group(1)
-                        
+                                
                         chave_alt = f"{tipo_alt} {num_alt}"
                         if ano_alt:
                             chave_alt += f" {ano_alt}"
@@ -583,19 +602,17 @@ def run_app():
     st.divider()
     diario_escolhido = st.radio(
         "Selecione o tipo de Diário para extração:",
-        ('Legislativo', 'Administrativo', 'Executivo (não utilizar por enquanto)'),
+        ('Legislativo', 'Administrativo', 'Executivo'),
         horizontal=True
     )
     st.divider()
 
     # --- Modo de entrada do PDF ---
-    modo = "Upload de arquivo"
-    if diario_escolhido != 'Executivo':
-        modo = st.radio(
-            "Como deseja fornecer o PDF?",
-            ("Upload de arquivo", "Link da internet"),
-            horizontal=True
-        )
+    modo = st.radio(
+        "Como deseja fornecer o PDF?",
+        ("Upload de arquivo", "Link da internet"),
+        horizontal=True
+    )
 
     pdf_bytes = None
     if modo == "Upload de arquivo":
@@ -627,7 +644,7 @@ def run_app():
         try:
             if diario_escolhido == 'Legislativo':
                 # Usa PyPDF2 para extrair texto do PDF em memória
-                reader = PdfReader(io.BytesIO(pdf_bytes))
+                reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
                 text = ""
                 for page in reader.pages:
                     page_text = page.extract_text()
@@ -694,5 +711,3 @@ def run_app():
 # --- Entrada ---
 if __name__ == "__main__":
     run_app()
-
-
