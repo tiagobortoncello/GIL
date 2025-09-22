@@ -131,13 +131,11 @@ class LegislativeProcessor:
     
     def process_requerimentos(self) -> pd.DataFrame:
         requerimentos_posicionais = []
-
+        
         # Padrões para requerimentos que possuem uma classificação explícita e que são encontrados pela sua posição
         explicit_patterns = [
             ("Recebido", "RQN", re.compile(r"RECEBIMENTO DE PROPOSIÇÃO[\s\S]*?REQUERIMENTO Nº\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})", re.IGNORECASE | re.DOTALL)),
-            ("Aprovado", "RQC", re.compile(r"aprovado\s+o\s+Requerimento(?:s)?(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})", re.IGNORECASE | re.DOTALL)),
-            ("Recebido para apreciação", "RQC", re.compile(r"É recebido pela\s+presidência, para posterior apreciação, o Requerimento(?: nº| Nº)?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})", re.IGNORECASE | re.DOTALL)),
-            # Nova regra para requerimentos prejudicados
+            # Nova regra para requerimentos prejudicados, mais específica
             ("Prejudicado", "RQC", re.compile(r"torna prejudicado o Requerimento em Comissão nº\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})", re.IGNORECASE | re.DOTALL)),
         ]
 
@@ -187,19 +185,7 @@ class LegislativeProcessor:
                     "dados": ["RQN", num_part, ano, "", "", "NÃO RECEBIDO"]
                 })
 
-        # 4. Remove requerimentos ignorados
-        ignore_patterns = [
-            re.compile(r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})", re.IGNORECASE | re.DOTALL),
-            re.compile(r"da Comissão.*?, informando que, na.*?foi aprovado o Requerimento\s*nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4})", re.IGNORECASE | re.DOTALL)
-        ]
-        reqs_to_ignore = set()
-        for pattern in ignore_patterns:
-            for match in pattern.finditer(self.text):
-                num_part = match.group(1).replace('.', '')
-                ano = match.group(2) if len(match.groups()) > 1 else num_part.split('/')[-1]
-                reqs_to_ignore.add(f"{num_part}/{ano}")
-
-        # 5. Ordena pela posição e filtra duplicatas e ignorados
+        # 4. Ordena pela posição e filtra duplicatas e ignorados
         requerimentos_posicionais.sort(key=lambda x: x["posicao"])
         
         unique_reqs = []
@@ -207,9 +193,8 @@ class LegislativeProcessor:
         for r in requerimentos_posicionais:
             dados = r["dados"]
             key = (dados[0], dados[1], dados[2])
-            numero_ano = f"{dados[1]}/{dados[2]}"
             
-            if key not in seen and numero_ano not in reqs_to_ignore:
+            if key not in seen:
                 seen.add(key)
                 unique_reqs.append(dados)
 
