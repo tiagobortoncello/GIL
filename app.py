@@ -92,10 +92,10 @@ class AdministrativeProcessor:
         self.norma_regex = re.compile(
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|DECISÃO DA 1ª-SECRETARIA)\s+Nº\s*([\d\.]+)\/(\d{4})'
         )
-        self.comandos_alteracao = [
-            "revoga", "altera", "inclui", "acrescenta", "modifica",
-            "dispor", "passam a vigorar", "a \d+ª alteração"
-        ]
+        self.alteracoes_regex = re.compile(
+            r'(?:revoga|altera|inclui|acrescenta|modifica|dispor|passam a vigorar|a \d+ª alteração)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|RESOLUÇÃO|INSTRUÇÃO NORMATIVA|DECISÃO DA 1ª-SECRETARIA)\s+Nº\s*([\d\s\.]+)(?:/(\d{4}))?',
+            re.IGNORECASE
+        )
 
     def process_pdf(self) -> pd.DataFrame:
         try:
@@ -110,47 +110,54 @@ class AdministrativeProcessor:
             return pd.DataFrame()
 
         # Etapa 1: Mapeamento global de todas as normas e suas posições
-        normas_encontradas = []
+        normas_principais = {} # Dicionário para armazenar normas publicadas
+
         for match in self.norma_regex.finditer(texto_completo):
-            normas_encontradas.append({
-                "start": match.start(),
-                "end": match.end(),
-                "tipo_texto": match.group(1),
-                "numero": match.group(2).replace('.', ''),
-                "ano": match.group(3)
-            })
-
-        dados = []
-        seen_normas_full = set()
-
-        # Etapa 2: Análise de contexto para determinar o status
-        for norma_info in normas_encontradas:
-            tipo_texto = norma_info["tipo_texto"]
-            numero = norma_info["numero"]
-            ano = norma_info["ano"]
+            tipo_texto = match.group(1)
+            numero = match.group(2).replace('.', '')
+            ano = match.group(3)
             sigla = self.mapa_tipos.get(tipo_texto, tipo_texto)
-
-            # Define o "bloco" de texto ao redor da norma para análise
-            start_pos = max(0, norma_info["start"] - 500)
-            end_pos = min(len(texto_completo), norma_info["end"] + 500)
-            bloco_texto = texto_completo[start_pos:end_pos].lower()
-
-            status = "Publicação"
             
-            for comando in self.comandos_alteracao:
-                if re.search(r'\b' + comando + r'\b', bloco_texto, re.IGNORECASE):
-                    if "revoga" in comando:
-                        status = "Revogação"
-                        break
-                    else:
-                        status = "Alteração"
-                        break
-            
-            chave = (sigla, numero, ano, status)
-            if chave not in seen_normas_full:
-                dados.append([sigla, numero, ano, status])
-                seen_normas_full.add(chave)
+            chave = (sigla, numero, ano)
+            if chave not in normas_principais:
+                normas_principais[chave] = {"Status": "Publicação"}
 
+        # Etapa 2: Análise para identificar e atualizar alterações
+        for match in self.alteracoes_regex.finditer(texto_completo):
+            comando = match.group(1).strip().lower()
+            tipo_alterada_raw = match.group(2)
+            
+            numero_raw_match = match.group(3)
+            if not numero_raw_match:
+                continue
+            
+            numero_alterada_raw = numero_raw_match.replace(" ", "").replace(".", "")
+            
+            ano_alterada = match.group(4)
+            if not ano_alterada:
+                continue
+
+            tipo_alterada = self.mapa_tipos.get(tipo_alterada_raw.upper(), tipo_alterada_raw)
+            chave_alteracao = (tipo_alterada, numero_alterada_raw, ano_alterada)
+
+            descricao_alteracao = "Alteração"
+            if "revoga" in comando:
+                descricao_alteracao = "Revogação"
+
+            # Atualiza o status se a norma for encontrada
+            if chave_alteracao in normas_principais:
+                normas_principais[chave_alteracao]["Status"] = descricao_alteracao
+            else:
+                # Caso a norma alterada não tenha sido identificada como publicada,
+                # adiciona-a como uma alteração
+                normas_principais[chave_alteracao] = {"Status": descricao_alteracao}
+
+
+        # Construir o DataFrame final
+        dados = []
+        for (sigla, numero, ano), info in normas_principais.items():
+            dados.append([sigla, numero, ano, info["Status"]])
+        
         return pd.DataFrame(dados, columns=['Sigla', 'Número', 'Ano', 'Status'])
 
     def to_csv(self):
