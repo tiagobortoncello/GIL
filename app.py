@@ -464,11 +464,17 @@ class AdministrativeProcessor:
             for match in self.alteracoes_regex.finditer(text):
                 comando = match.group(1).strip().lower()
                 tipo_alterada_raw = match.group(2)
-                numero_alterada_raw = match.group(3).replace(" ", "").replace(".", "")
+                
+                # AQUI ESTÁ A CORREÇÃO PRINCIPAL
+                numero_raw_match = match.group(3)
+                if not numero_raw_match:
+                    continue  # Pula se o número não for encontrado
+                
+                numero_alterada_raw = numero_raw_match.replace(" ", "").replace(".", "")
 
-                # AQUI ESTÁ A CORREÇÃO
+                # Opcional: verificação para o ano
                 ano_alterada = match.group(4) if len(match.groups()) > 3 and match.group(4) else ""
-
+                
                 if not ano_alterada:
                     continue
 
