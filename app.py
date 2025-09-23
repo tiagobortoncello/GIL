@@ -431,7 +431,7 @@ class AdministrativeProcessor:
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         self.alteracoes_regex = re.compile(
-            r"(revoga|altera|inclui|acrescenta)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s*([\d\s\.]+)\/(\d{4})",
+            r"(?:revoga|altera|inclui|acrescenta|modifica|dispor|passam a vigorar)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|RESOLUÇÃO)\s+Nº\s*([\d\s\.]+)(?:/(\d{4}))?",
             re.IGNORECASE
         )
 
@@ -465,14 +465,17 @@ class AdministrativeProcessor:
                 comando = match.group(1).strip().lower()
                 tipo_alterada_raw = match.group(2)
                 numero_alterada_raw = match.group(3).replace(" ", "").replace(".", "")
-                ano_alterada = match.group(4)
+                ano_alterada = match.group(4) if len(match.groups()) > 3 else ""
+
+                if not ano_alterada:
+                    continue
 
                 tipo_alterada = self.mapa_tipos.get(tipo_alterada_raw.upper(), tipo_alterada_raw)
 
                 descricao_alteracao = ""
                 if "revoga" in comando:
                     descricao_alteracao = "Revogação"
-                elif "altera" in comando or "inclui" in comando or "acrescenta" in comando:
+                elif "altera" in comando or "inclui" in comando or "acrescenta" in comando or "modifica" in comando or "passam a vigorar" in comando:
                     descricao_alteracao = "Alteração"
                 
                 if descricao_alteracao:
