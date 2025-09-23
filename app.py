@@ -465,7 +465,9 @@ class AdministrativeProcessor:
                 comando = match.group(1).strip().lower()
                 tipo_alterada_raw = match.group(2)
                 numero_alterada_raw = match.group(3).replace(" ", "").replace(".", "")
-                ano_alterada = match.group(4) if len(match.groups()) > 3 else ""
+
+                # AQUI ESTÁ A CORREÇÃO
+                ano_alterada = match.group(4) if len(match.groups()) > 3 and match.group(4) else ""
 
                 if not ano_alterada:
                     continue
