@@ -431,7 +431,7 @@ class AdministrativeProcessor:
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         self.alteracoes_regex = re.compile(
-            r"(?:revoga|altera|inclui|acrescenta|modifica|dispor|passam a vigorar)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|RESOLUÇÃO)\s+Nº\s*([\d\s\.]+)(?:/(\d{4}))?",
+            r"(?:revoga|altera|inclui|acrescenta|modifica|dispor|passam a vigorar|a \d{2,3}ª alteração)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|RESOLUÇÃO|INSTRUÇÃO NORMATIVA)\s+Nº\s*([\d\s\.]+)(?:/(\d{4}))?",
             re.IGNORECASE
         )
 
