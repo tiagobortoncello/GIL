@@ -79,6 +79,88 @@ def get_norma_from_match(match, mapa_tipos):
     return tipo, numero_raw, ano
 
 # --- Classes de Processamento ---
+class AdministrativeProcessor:
+    """ Processa bytes de um Diário Administrativo, extraindo normas e retornando dados CSV. """
+    def __init__(self, pdf_bytes: bytes):
+        self.pdf_bytes = pdf_bytes
+        self.mapa_tipos = {
+            "DELIBERAÇÃO DA MESA": "DLB",
+            "PORTARIA DGE": "PRT",
+            "ORDEM DE SERVIÇO PRES/PSEC": "OSV",
+            "DECISÃO DA 1ª-SECRETARIA": "DCS"
+        }
+        self.norma_regex = re.compile(
+            r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|DECISÃO DA 1ª-SECRETARIA)\s+Nº\s*([\d\.]+)\/(\d{4})'
+        )
+        self.comandos_alteracao = [
+            "revoga", "altera", "inclui", "acrescenta", "modifica",
+            "dispor", "passam a vigorar", "a \d+ª alteração"
+        ]
+
+    def process_pdf(self) -> pd.DataFrame:
+        try:
+            doc = fitz.open(stream=self.pdf_bytes, filetype="pdf")
+            texto_completo = ""
+            for page in doc:
+                texto_completo += page.get_text("text") + "\n"
+            doc.close()
+            texto_completo = re.sub(r'\s+', ' ', texto_completo)
+        except Exception as e:
+            st.error(f"Erro ao abrir ou processar o arquivo PDF: {e}")
+            return pd.DataFrame()
+
+        # Etapa 1: Mapeamento global de todas as normas e suas posições
+        normas_encontradas = []
+        for match in self.norma_regex.finditer(texto_completo):
+            normas_encontradas.append({
+                "start": match.start(),
+                "end": match.end(),
+                "tipo_texto": match.group(1),
+                "numero": match.group(2).replace('.', ''),
+                "ano": match.group(3)
+            })
+
+        dados = []
+        seen_normas_full = set()
+
+        # Etapa 2: Análise de contexto para determinar o status
+        for norma_info in normas_encontradas:
+            tipo_texto = norma_info["tipo_texto"]
+            numero = norma_info["numero"]
+            ano = norma_info["ano"]
+            sigla = self.mapa_tipos.get(tipo_texto, tipo_texto)
+
+            # Define o "bloco" de texto ao redor da norma para análise
+            start_pos = max(0, norma_info["start"] - 500)
+            end_pos = min(len(texto_completo), norma_info["end"] + 500)
+            bloco_texto = texto_completo[start_pos:end_pos].lower()
+
+            status = "Publicação"
+            
+            for comando in self.comandos_alteracao:
+                if re.search(r'\b' + comando + r'\b', bloco_texto, re.IGNORECASE):
+                    if "revoga" in comando:
+                        status = "Revogação"
+                        break
+                    else:
+                        status = "Alteração"
+                        break
+            
+            chave = (sigla, numero, ano, status)
+            if chave not in seen_normas_full:
+                dados.append([sigla, numero, ano, status])
+                seen_normas_full.add(chave)
+
+        return pd.DataFrame(dados, columns=['Sigla', 'Número', 'Ano', 'Status'])
+
+    def to_csv(self):
+        df = self.process_pdf()
+        if df.empty:
+            return None
+        output_csv = io.StringIO()
+        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
+        return output_csv.getvalue().encode('utf-8')
+
 class LegislativeProcessor:
     """ Processa o texto de um Diário do Legislativo, extraindo normas, proposições, requerimentos e pareceres. """
     def __init__(self, text: str):
@@ -417,106 +499,6 @@ class LegislativeProcessor:
             "Pareceres": df_pareceres
         }
 
-class AdministrativeProcessor:
-    """ Processa bytes de um Diário Administrativo, extraindo normas e retornando dados CSV. """
-    def __init__(self, pdf_bytes: bytes):
-        self.pdf_bytes = pdf_bytes
-        self.mapa_tipos = {
-            "DELIBERAÇÃO DA MESA": "DLB",
-            "PORTARIA DGE": "PRT",
-            "ORDEM DE SERVIÇO PRES/PSEC": "OSV",
-            "DECISÃO DA 1ª-SECRETARIA": "DCS"
-        }
-        self.norma_regex = re.compile(
-            r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|DECISÃO DA 1ª-SECRETARIA)\s+Nº\s+([\d\.]+)\/(\d{4})'
-        )
-        self.alteracoes_regex = re.compile(
-            r"(?:revoga|altera|inclui|acrescenta|modifica|dispor|passam a vigorar|a \d{1,3}ª alteração)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|RESOLUÇÃO|INSTRUÇÃO NORMATIVA|DECISÃO DA 1ª-SECRETARIA)\s+Nº\s*([\d\s\.]+)(?:/(\d{4}))?",
-            re.IGNORECASE
-        )
-
-    def process_pdf(self) -> pd.DataFrame:
-        try:
-            doc = fitz.open(stream=self.pdf_bytes, filetype="pdf")
-        except Exception as e:
-            st.error(f"Erro ao abrir o arquivo PDF: {e}")
-            return pd.DataFrame()
-
-        texto_completo = ""
-        for page in doc:
-            texto_completo += page.get_text("text") + "\n"
-        doc.close()
-        texto_completo = re.sub(r'\s+', ' ', texto_completo)
-        
-        normas_encontradas = []
-        for match in self.norma_regex.finditer(texto_completo):
-            normas_encontradas.append({
-                "start": match.start(),
-                "end": match.end(),
-                "tipo_texto": match.group(1),
-                "numero": match.group(2).replace('.', ''),
-                "ano": match.group(3)
-            })
-
-        dados = []
-        seen_normas = set()
-
-        for i, norma_info in enumerate(normas_encontradas):
-            tipo_texto = norma_info["tipo_texto"]
-            numero = norma_info["numero"]
-            ano = norma_info["ano"]
-            sigla = self.mapa_tipos.get(tipo_texto, tipo_texto)
-
-            chave = (sigla, numero, ano, "Publicação")
-            if chave not in seen_normas:
-                dados.append([sigla, numero, ano, "Publicação"])
-                seen_normas.add(chave)
-
-            # Analisar o texto após a norma principal para buscar alterações
-            end_of_norma = norma_info["end"]
-            start_of_next_norma = normas_encontradas[i+1]["start"] if i+1 < len(normas_encontradas) else len(texto_completo)
-            
-            # Limitar a busca para não pegar o texto da próxima norma
-            bloco_de_texto = texto_completo[end_of_norma:start_of_next_norma]
-            
-            for match_alteracao in self.alteracoes_regex.finditer(bloco_de_texto):
-                comando = match_alteracao.group(1).strip().lower()
-                tipo_alterada_raw = match_alteracao.group(2)
-                
-                numero_raw_match = match_alteracao.group(3)
-                if not numero_raw_match:
-                    continue
-                
-                numero_alterada_raw = numero_raw_match.replace(" ", "").replace(".", "")
-                
-                ano_alterada = match_alteracao.group(4)
-                if not ano_alterada:
-                    continue
-
-                tipo_alterada = self.mapa_tipos.get(tipo_alterada_raw.upper(), tipo_alterada_raw)
-
-                descricao_alteracao = ""
-                if "revoga" in comando:
-                    descricao_alteracao = "Revogação"
-                elif "altera" in comando or "inclui" in comando or "acrescenta" in comando or "modifica" in comando or "passam a vigorar" in comando:
-                    descricao_alteracao = "Alteração"
-                
-                if descricao_alteracao:
-                    chave_alteracao = (tipo_alterada, numero_alterada_raw, ano_alterada, descricao_alteracao)
-                    if chave_alteracao not in seen_normas:
-                        dados.append([tipo_alterada, numero_alterada_raw, ano_alterada, descricao_alteracao])
-                        seen_normas.add(chave_alteracao)
-
-        return pd.DataFrame(dados, columns=['Sigla', 'Número', 'Ano', 'Status'])
-
-    def to_csv(self):
-        df = self.process_pdf()
-        if df.empty:
-            return None
-        output_csv = io.StringIO()
-        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
-        return output_csv.getvalue().encode('utf-8')
-
 class ExecutiveProcessor:
     """Processa o texto de um Diário do Executivo, extraindo normas e alterações."""
     def __init__(self, pdf_bytes: bytes):
@@ -800,7 +782,7 @@ def run_app():
 
                 output = io.BytesIO()
                 excel_file_name = "Legislativo_Extraido.xlsx"
-                with pd.ExcelWriter(output, engine="openypxl") as writer:
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     for sheet_name, df in extracted_data.items():
                         df.to_excel(writer, sheet_name=sheet_name, index=False, header=True)
                 output.seek(0)
