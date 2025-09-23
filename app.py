@@ -428,10 +428,10 @@ class AdministrativeProcessor:
             "DECISÃO DA 1ª-SECRETARIA": "DCS"
         }
         self.norma_regex = re.compile(
-            r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
+            r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|DECISÃO DA 1ª-SECRETARIA)\s+Nº\s+([\d\.]+)\/(\d{4})'
         )
         self.alteracoes_regex = re.compile(
-            r"(?:revoga|altera|inclui|acrescenta|modifica|dispor|passam a vigorar|a \d{2,3}ª alteração)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|RESOLUÇÃO|INSTRUÇÃO NORMATIVA)\s+Nº\s*([\d\s\.]+)(?:/(\d{4}))?",
+            r"(?:revoga|altera|inclui|acrescenta|modifica|dispor|passam a vigorar|a \d{1,3}ª alteração)[\s\S]{0,100}?(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC|RESOLUÇÃO|INSTRUÇÃO NORMATIVA|DECISÃO DA 1ª-SECRETARIA)\s+Nº\s*([\d\s\.]+)(?:/(\d{4}))?",
             re.IGNORECASE
         )
 
@@ -442,39 +442,54 @@ class AdministrativeProcessor:
             st.error(f"Erro ao abrir o arquivo PDF: {e}")
             return pd.DataFrame()
 
+        texto_completo = ""
+        for page in doc:
+            texto_completo += page.get_text("text") + "\n"
+        doc.close()
+        texto_completo = re.sub(r'\s+', ' ', texto_completo)
+        
+        normas_encontradas = []
+        for match in self.norma_regex.finditer(texto_completo):
+            normas_encontradas.append({
+                "start": match.start(),
+                "end": match.end(),
+                "tipo_texto": match.group(1),
+                "numero": match.group(2).replace('.', ''),
+                "ano": match.group(3)
+            })
+
         dados = []
         seen_normas = set()
-        for page in doc:
-            text = page.get_text("text")
-            text = re.sub(r'\s+', ' ', text)
-            
-            # Processar novas normas
-            for match in self.norma_regex.finditer(text):
-                tipo_texto = match.group(1)
-                numero = match.group(2).replace('.', '')
-                ano = match.group(3)
-                sigla = self.mapa_tipos.get(tipo_texto, None)
-                if sigla:
-                    chave = (sigla, numero, ano, "Publicação")
-                    if chave not in seen_normas:
-                        dados.append([sigla, numero, ano, "Publicação"])
-                        seen_normas.add(chave)
 
-            # Processar alterações
-            for match in self.alteracoes_regex.finditer(text):
-                comando = match.group(1).strip().lower()
-                tipo_alterada_raw = match.group(2)
+        for i, norma_info in enumerate(normas_encontradas):
+            tipo_texto = norma_info["tipo_texto"]
+            numero = norma_info["numero"]
+            ano = norma_info["ano"]
+            sigla = self.mapa_tipos.get(tipo_texto, tipo_texto)
+
+            chave = (sigla, numero, ano, "Publicação")
+            if chave not in seen_normas:
+                dados.append([sigla, numero, ano, "Publicação"])
+                seen_normas.add(chave)
+
+            # Analisar o texto após a norma principal para buscar alterações
+            end_of_norma = norma_info["end"]
+            start_of_next_norma = normas_encontradas[i+1]["start"] if i+1 < len(normas_encontradas) else len(texto_completo)
+            
+            # Limitar a busca para não pegar o texto da próxima norma
+            bloco_de_texto = texto_completo[end_of_norma:start_of_next_norma]
+            
+            for match_alteracao in self.alteracoes_regex.finditer(bloco_de_texto):
+                comando = match_alteracao.group(1).strip().lower()
+                tipo_alterada_raw = match_alteracao.group(2)
                 
-                # AQUI ESTÁ A CORREÇÃO PRINCIPAL
-                numero_raw_match = match.group(3)
+                numero_raw_match = match_alteracao.group(3)
                 if not numero_raw_match:
-                    continue  # Pula se o número não for encontrado
+                    continue
                 
                 numero_alterada_raw = numero_raw_match.replace(" ", "").replace(".", "")
-
-                # Opcional: verificação para o ano
-                ano_alterada = match.group(4) if len(match.groups()) > 3 and match.group(4) else ""
                 
+                ano_alterada = match_alteracao.group(4)
                 if not ano_alterada:
                     continue
 
@@ -487,12 +502,11 @@ class AdministrativeProcessor:
                     descricao_alteracao = "Alteração"
                 
                 if descricao_alteracao:
-                    chave = (tipo_alterada, numero_alterada_raw, ano_alterada, descricao_alteracao)
-                    if chave not in seen_normas:
+                    chave_alteracao = (tipo_alterada, numero_alterada_raw, ano_alterada, descricao_alteracao)
+                    if chave_alteracao not in seen_normas:
                         dados.append([tipo_alterada, numero_alterada_raw, ano_alterada, descricao_alteracao])
-                        seen_normas.add(chave)
+                        seen_normas.add(chave_alteracao)
 
-        doc.close()
         return pd.DataFrame(dados, columns=['Sigla', 'Número', 'Ano', 'Status'])
 
     def to_csv(self):
@@ -786,7 +800,7 @@ def run_app():
 
                 output = io.BytesIO()
                 excel_file_name = "Legislativo_Extraido.xlsx"
-                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                with pd.ExcelWriter(output, engine="openypxl") as writer:
                     for sheet_name, df in extracted_data.items():
                         df.to_excel(writer, sheet_name=sheet_name, index=False, header=True)
                 output.seek(0)
